@@ -382,7 +382,7 @@ sequenceDiagram
     S->>S: bcrypt.CompareHashAndPassword
     S->>S: crypto/rand で Session ID 生成
     S->>DB: INSERT INTO sessions
-    S-->>C: Set-Cookie: kanban_session=...; HttpOnly; SameSite=Lax
+    S-->>C: Set-Cookie: kanban_session=...#59; HttpOnly#59; SameSite=Lax
 
     Note over C,DB: 以降の Request
     C->>S: GET /tasks/1 + Cookie
