@@ -2,247 +2,80 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/KenzoKasahara/go_kanban_webapp_hands_on/go-kanban/internal/app"
 )
 
-type Task struct {
-	ID          int64  `json:"id"`
-	ProjectID   int64  `json:"project_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Priority    string `json:"priority"`
-	Status      string `json:"status"`
-	Version     int    `json:"version"`
-}
-
-type Project struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
-
-var pool *pgxpool.Pool
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("encode response: %v", err)
-	}
-}
-
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func createProjectHandler(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Name string `json:"name"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	var project Project
-
-	err := pool.QueryRow(
-		r.Context(),
-		"INSERT INTO projects (name) VALUES ($1) RETURNING id, name",
-		input.Name,
-	).Scan(&project.ID, &project.Name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, project)
-}
-
-func createTaskHandler(w http.ResponseWriter, r *http.Request) {
-	projectID, err := pathID(r, "id")
-	if err != nil {
-		respondError(w, err)
-		return
-	}
-
-	var input CreateTaskRequest
-
-	if err := decodeJSON(r, &input); err != nil {
-		respondError(w, err)
-		return
-	}
-
-	input.Normalize()
-
-	if err := input.Validate(); err != nil {
-		respondError(w, err)
-		return
-	}
-
-	var task Task
-
-	err = pool.QueryRow(
-		r.Context(),
-		`INSERT INTO tasks (project_id, title, description, priority)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, project_id, title, description, priority, status, version`,
-		projectID, input.Title, input.Description, input.Priority,
-	).Scan(
-		&task.ID, &task.ProjectID, &task.Title,
-		&task.Description, &task.Priority, &task.Status, &task.Version,
-	)
-
-	// project が存在しない場合、DBは外部キー違反を返す。
-	// これは Server の不具合ではなく「指定された project が無い」という利用者向けの情報。
-	if isForeignKeyViolation(err) {
-		respondError(w, ErrNotFound)
-		return
-	}
-
-	if err != nil {
-		respondError(w, fmt.Errorf("insert task: %w", err))
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, task)
-}
-
-func listTasksHandler(w http.ResponseWriter, r *http.Request) {
-	projectID, err := pathID(r, "id")
-	if err != nil {
-		respondError(w, err)
-		return
-	}
-
-	rows, err := pool.Query(
-		r.Context(),
-		`SELECT id, project_id, title, description, priority, status, version
-		 FROM tasks WHERE project_id = $1 ORDER BY id`,
-		projectID,
-	)
-	if err != nil {
-		respondError(w, fmt.Errorf("query tasks: %w", err))
-		return
-	}
-	defer rows.Close()
-
-	tasks := []Task{}
-
-	for rows.Next() {
-		var task Task
-
-		if err := rows.Scan(
-			&task.ID, &task.ProjectID, &task.Title,
-			&task.Description, &task.Priority, &task.Status, &task.Version,
-		); err != nil {
-			respondError(w, fmt.Errorf("scan task: %w", err))
-			return
-		}
-
-		tasks = append(tasks, task)
-	}
-
-	// ループを抜けた理由がエラーでないかを確認する。
-	if err := rows.Err(); err != nil {
-		respondError(w, fmt.Errorf("iterate tasks: %w", err))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, tasks)
-}
-
-func getTaskHandler(w http.ResponseWriter, r *http.Request) {
-	taskID, err := pathID(r, "id")
-	if err != nil {
-		respondError(w, err)
-		return
-	}
-
-	var task Task
-
-	err = pool.QueryRow(
-		r.Context(),
-		`SELECT id, project_id, title, description, priority, status, version
-		 FROM tasks WHERE id = $1`,
-		taskID,
-	).Scan(
-		&task.ID, &task.ProjectID, &task.Title,
-		&task.Description, &task.Priority, &task.Status, &task.Version,
-	)
-
-	// pgx.ErrNoRows を「存在しない」という業務上の意味へ翻訳する。
-	if errors.Is(err, pgx.ErrNoRows) {
-		respondError(w, ErrNotFound)
-		return
-	}
-
-	if err != nil {
-		respondError(w, fmt.Errorf("query task: %w", err))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, task)
-}
-
-// decodeJSON は未知のfieldを拒否する。
-// typoした field 名が黙って無視されると、利用者は「送ったのに反映されない」状態になる。
-func decodeJSON(r *http.Request, dst any) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(dst); err != nil {
-		return &ValidationError{Message: "request body is not valid JSON: " + err.Error()}
-	}
-
-	return nil
-}
-
-func pathID(r *http.Request, name string) (int64, error) {
-	raw := r.PathValue(name)
-
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id <= 0 {
-		return 0, &ValidationError{Message: fmt.Sprintf("%s must be a positive integer", name)}
-	}
-
-	return id, nil
-}
-
 func main() {
+	// ログの形式は Chapter 08 で JSON に変える。
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	if err := run(logger); err != nil {
+		logger.Error("server stopped with error", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://kanban:local-dev-password@localhost:5432/kanban"
 	}
 
-	var err error
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	pool, err = pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		log.Fatalf("Unable to connect to database: %v", err)
+		return err
 	}
 	defer pool.Close()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("POST /projects", createProjectHandler)
-	mux.HandleFunc("POST /projects/{id}/tasks", createTaskHandler)
-	mux.HandleFunc("GET /projects/{id}/tasks", listTasksHandler)
-	mux.HandleFunc("GET /tasks/{id}", getTaskHandler)
+	if err := pool.Ping(ctx); err != nil {
+		return err
+	}
 
-	log.Println("server started on :8080")
+	cfg := app.DefaultConfig()
+	// Part 2・Part 3 の検証中だけ DEBUG_ROUTES=1 で起動する。
+	cfg.DebugRoutes = os.Getenv("DEBUG_ROUTES") == "1"
 
-	if err := http.ListenAndServe(":8080", mux); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           app.New(pool, logger, cfg),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+
+	go func() {
+		logger.Info("server started", slog.String("addr", server.Addr))
+
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case err := <-serverErr:
+		return err
+	case <-ctx.Done():
+		// 処理中のRequestを終わらせてから止める。
+		// いきなり落とすと、Commit直前の処理が中断される。
+		logger.Info("shutdown signal received")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		return server.Shutdown(shutdownCtx)
 	}
 }

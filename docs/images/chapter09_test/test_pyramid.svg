@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" font-family="'Hiragino Sans','Yu Gothic','Meiryo','Noto Sans JP',sans-serif">
+  <rect x="0" y="0" width="900" height="400" rx="12" fill="#ffffff"/>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <polygon points="238.2,23 481.8,23 533.2,107 186.8,107" fill="#ffe3d6" stroke="#d98b6a" stroke-width="1.5"/>
+  <polygon points="183.2,113 536.8,113 588.2,197 131.8,197" fill="#fff1c9" stroke="#d1a93f" stroke-width="1.5"/>
+  <polygon points="128.2,203 591.8,203 643.2,287 76.8,287" fill="#e3f4d4" stroke="#8fbf6a" stroke-width="1.5"/>
+  <polygon points="73.2,293 646.8,293 698.2,377 21.8,377" fill="#d3f0d8" stroke="#62a877" stroke-width="1.5"/>
+
+  <g text-anchor="middle" fill="#222">
+    <text x="360" y="50" font-size="18" font-weight="bold">Load Test</text>
+    <text x="360" y="72" font-size="13" fill="#444">数分 / 実環境に近い構成</text>
+    <text x="360" y="94" font-size="14">「負荷をかけると何が劣化するか」</text>
+
+    <text x="360" y="140" font-size="18" font-weight="bold">Integration Test</text>
+    <text x="360" y="162" font-size="13" fill="#444">秒単位 / 実 DB</text>
+    <text x="360" y="184" font-size="14">「HTTP から DB まで繋がっているか」</text>
+
+    <text x="360" y="230" font-size="18" font-weight="bold">Service Test</text>
+    <text x="360" y="252" font-size="13" fill="#444">ミリ秒 / Fake Repository</text>
+    <text x="360" y="274" font-size="14">「Service の判断は正しいか」</text>
+
+    <text x="360" y="320" font-size="18" font-weight="bold">Unit Test</text>
+    <text x="360" y="342" font-size="13" fill="#444">ミリ秒 / 依存なし</text>
+    <text x="360" y="364" font-size="14">「業務ルールは正しいか」</text>
+  </g>
+
+  <line x1="730" y1="45" x2="730" y2="355" stroke="#555" stroke-width="2" marker-start="url(#head)" marker-end="url(#head)"/>
+  <g font-size="15" fill="#333">
+    <text x="748" y="50" font-weight="bold">遅い</text>
+    <text x="748" y="72">実際の構成に近い</text>
+    <text x="748" y="340" font-weight="bold">速い</text>
+    <text x="748" y="362">数を多く書ける</text>
+  </g>
+</svg>

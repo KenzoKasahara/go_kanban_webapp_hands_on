@@ -1,0 +1,81 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"example.com/go-kanban/internal/app"
+)
+
+func main() {
+	// ログの形式は Chapter 08 で JSON に変える。
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	if err := run(logger); err != nil {
+		logger.Error("server stopped with error", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://kanban:local-dev-password@localhost:5432/kanban"
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		return err
+	}
+
+	cfg := app.DefaultConfig()
+	// Part 2・Part 3 の検証中だけ DEBUG_ROUTES=1 で起動する。
+	cfg.DebugRoutes = os.Getenv("DEBUG_ROUTES") == "1"
+
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           app.New(pool, logger, cfg),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+
+	go func() {
+		logger.Info("server started", slog.String("addr", server.Addr))
+
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case err := <-serverErr:
+		return err
+	case <-ctx.Done():
+		// 処理中のRequestを終わらせてから止める。
+		// いきなり落とすと、Commit直前の処理が中断される。
+		logger.Info("shutdown signal received")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		return server.Shutdown(shutdownCtx)
+	}
+}

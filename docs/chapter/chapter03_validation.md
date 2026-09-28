@@ -9,7 +9,7 @@ Chapter 02 で観測した4つの問題を潰す。
 3. 存在しない Task が 500 になる
 4. DB の内部エラーが利用者へ漏れる
 
-Validation と Error Handling は別の話に見えるが、どちらも「**外部から来た入力や、下位層から来た失敗を、利用者に返してよい形へ変換する**」という同じ仕事をしている。この章でまとめて扱う。
+Validation と Error Handling は別の話に見えるが、どちらも「外部から来た入力や、下位層から来た失敗を、利用者に返してよい形へ変換する」という同じ仕事をしている。この章でまとめて扱う。
 
 ## 現在地
 
@@ -71,7 +71,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// 業務上の失敗の分類。sentinel error と呼ばれる。
+// 業務上の失敗の分類。sentinel error（比較の目印として使う、あらかじめ用意した error 値）と呼ばれる。
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrForbidden    = errors.New("forbidden")
@@ -161,7 +161,8 @@ func respondError(w http.ResponseWriter, err error) {
 }
 
 // PostgreSQL の制約違反は、Go側では単なる error として届く。
-// SQLSTATE を見て業務上の意味へ翻訳しないと、すべて 500 になる。
+// SQLSTATE（PostgreSQL がエラーの種類ごとに返す5桁のコード）を見て
+// 業務上の意味へ翻訳しないと、すべて 500 になる。
 const (
 	pgCodeUniqueViolation     = "23505"
 	pgCodeForeignKeyViolation = "23503"
@@ -193,17 +194,15 @@ func isCheckViolation(err error) bool {
 
 ### なぜこの設計にするのか
 
-**`respondError` を「error を Status へ変換する唯一の場所」にする。**
-
-各 Handler が `http.Error(w, ..., 500)` を個別に書くと、Status の付け方がバラバラになり、どこか1か所で内部情報を漏らす。変換を1か所に集めると、そこだけレビューすれば「漏れていないか」を判断できる。
+`respondError` を「error を Status へ変換する唯一の場所」にする。各 Handler が `http.Error(w, ..., 500)` を個別に書くと、Status の付け方がバラバラになり、どこか1か所で内部情報を漏らす。変換を1か所に集めると、そこだけレビューすれば「漏れていないか」を判断できる。
 
 <details>
 <summary>GO NOTE: <code>errors.Is</code> と <code>errors.As</code> の使い分け</summary>
 
 | 関数 | 用途 | 例 |
 |---|---|---|
-| `errors.Is(err, ErrNotFound)` | **同一の値**かを判定する。sentinel error 向け | 「これは NotFound か？」 |
-| `errors.As(err, &target)` | **その型**かを判定し、値を取り出す。情報を持つ error 向け | 「ValidationError なら、その Message を読みたい」 |
+| `errors.Is(err, ErrNotFound)` | 同一の値かを判定する。sentinel error 向け | 「これは NotFound か？」 |
+| `errors.As(err, &target)` | その型かを判定し、値を取り出す。情報を持つ error 向け | 「ValidationError なら、その Message を読みたい」 |
 
 どちらも `%w` でラップされた error を辿る。
 
@@ -241,7 +240,7 @@ sentinel error だけだと、409 のメッセージが常に同じになる。
 
 利用者には意味が伝わらない。かといって内部エラーをそのまま返すわけにもいかない。
 
-`PublicError` は「**分類**（何番を返すか）」と「**公開文言**（何と説明するか）」を分けて持つ。`Unwrap()` があるので `errors.Is(err, ErrConflict)` は従来どおり成立する。
+`PublicError` は「分類（何番を返すか）」と「公開文言（何と説明するか）」を分けて持つ。`Unwrap()` があるので `errors.Is(err, ErrConflict)` は従来どおり成立する。
 
 ```go
 return publicError(ErrConflict, "email is already registered")
@@ -315,17 +314,17 @@ func (input CreateTaskRequest) Validate() error {
 ### なぜ Normalize と Validate を分けるのか
 
 ```text
-"   "  ──Normalize──>  ""  ──Validate──>  400 "title is required"
+"   "  → Normalize →  ""  → Validate →  400 "title is required"
 ```
 
 正規化せずに検証すると、`"   "`（空白3文字）が「title あり」として通ってしまう。DB には見た目が空のタイトルが入る。
 
-**正規化 → 検証 → 保存**の順を守ると、「保存された値は常に正規化済み」という前提が成立する。
+正規化 → 検証 → 保存の順を守ると、「保存された値は常に正規化済み」という前提が成立する。
 
 <details>
 <summary>GO NOTE: <code>len([]rune(s))</code> と <code>len(s)</code> の違い</summary>
 
-Go の `len(string)` は**バイト数**を返す。
+Go の `len(string)` はバイト数を返す。
 
 ```go
 len("あいう")           // 9（UTF-8 で1文字3バイト）
@@ -349,7 +348,7 @@ Title string `json:"title" validate:"required,max=100"`
 
 ただし、今の検証項目は3つしかない。ライブラリを入れると「タグの書き方を調べる」コストのほうが大きい。
 
-**検証項目が増えて if 文が並び始めたら**導入を検討する。そのとき初めて、ライブラリが何を解決しているのかが分かる。
+検証項目が増えて if 文が並び始めたら導入を検討する。そのとき初めて、ライブラリが何を解決しているのかが分かる。
 
 </details>
 
@@ -366,8 +365,8 @@ JSON Decode を厳格にし、エラーを `respondError` に集約する。
 `cmd/api/main.go` に共通処理を追加する。
 
 ```go
-// decodeJSON は未知のfieldを拒否する。
-// typoした field 名が黙って無視されると、利用者は「送ったのに反映されない」状態になる。
+// decodeJSON は未知のフィールドを拒否する。
+// typo したフィールド名が黙って無視されると、利用者は「送ったのに反映されない」状態になる。
 func decodeJSON(r *http.Request, dst any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -541,6 +540,10 @@ go run ./cmd/api
 
 ## Step 4. 動かして確認する
 
+### やること
+
+Chapter 02 で観測した問題が、Status と Response Body の両方で解消したか確認する。
+
 ### 実行
 
 先に、Task の追加先になる Project があるか確認する。DB を作り直した場合など、Project が無ければ作っておく。
@@ -554,7 +557,7 @@ curl -X POST localhost:8080/projects \
 以降のコマンドは `projects/1` を前提にしている。返ってきた `id` が 1 でなければ、URL の `1` をその値に置き換える。
 
 > **NOTE**
-> Project が無いまま Task を作ると、外部キー違反を `ErrNotFound` に翻訳した結果として **404** が返る。バリデーションが先に動くため、不正な入力であれば Project が無くても 400 になる。400 を期待したケースで 404 が返ってきたら、`createTaskHandler` が Step 3 のコードに置き換わっているか確認する。
+> Project が無いまま Task を作ると、外部キー違反を `ErrNotFound` に翻訳した結果として 404 が返る。Validation が先に動くため、不正な入力であれば Project が無くても 400 になる。400 を期待したケースで 404 が返ってきたら、`createTaskHandler` が Step 3 のコードに置き換わっているか確認する。
 
 Project が用意できたら、各ケースを順に叩く。`-w '\n%{http_code}\n'` で、Response Body の次の行に Status を表示する。
 
@@ -571,7 +574,7 @@ curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
 curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"ok","priority":"SUPER_HIGH"}'
 
-# field 名の typo
+# フィールド名の typo
 curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"ok","titel":"typo"}'
 
@@ -607,15 +610,15 @@ curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
 
 | 入力 | Status | Response Body |
 |---|---|---|
-| `{"title":"","priority":"high"}` | **400** | `{"error":{"code":"invalid_request","message":"title is required"}}` |
-| `{"title":"   ","priority":"high"}` | **400** | `{"error":{"code":"invalid_request","message":"title is required"}}` |
-| `{"title":"ok","priority":"SUPER_HIGH"}` | **400** | `{"error":{"code":"invalid_request","message":"priority must be one of: low, medium, high"}}` |
-| `{"title":"ok","titel":"typo"}` | **400** | `{"error":{"code":"invalid_request","message":"request body is not valid JSON: json: unknown field \"titel\""}}` |
-| `{"title":` （壊れた JSON） | **400** | `{"error":{"code":"invalid_request","message":"request body is not valid JSON: unexpected EOF"}}` |
-| `GET /tasks/abc` | **400** | `{"error":{"code":"invalid_request","message":"id must be a positive integer"}}` |
-| `GET /tasks/9999` | **404** | `{"error":{"code":"not_found","message":"resource not found"}}` |
-| `POST /projects/9999/tasks` | **404** | `{"error":{"code":"not_found","message":"resource not found"}}` |
-| `{"title":"write docs","priority":"high"}` | **201** | `{"id":5,"project_id":1,"title":"write docs",...}` |
+| `{"title":"","priority":"high"}` | 400 | `{"error":{"code":"invalid_request","message":"title is required"}}` |
+| `{"title":"   ","priority":"high"}` | 400 | `{"error":{"code":"invalid_request","message":"title is required"}}` |
+| `{"title":"ok","priority":"SUPER_HIGH"}` | 400 | `{"error":{"code":"invalid_request","message":"priority must be one of: low, medium, high"}}` |
+| `{"title":"ok","titel":"typo"}` | 400 | `{"error":{"code":"invalid_request","message":"request body is not valid JSON: json: unknown field \"titel\""}}` |
+| `{"title":` （壊れた JSON） | 400 | `{"error":{"code":"invalid_request","message":"request body is not valid JSON: unexpected EOF"}}` |
+| `GET /tasks/abc` | 400 | `{"error":{"code":"invalid_request","message":"id must be a positive integer"}}` |
+| `GET /tasks/9999` | 404 | `{"error":{"code":"not_found","message":"resource not found"}}` |
+| `POST /projects/9999/tasks` | 404 | `{"error":{"code":"not_found","message":"resource not found"}}` |
+| `{"title":"write docs","priority":"high"}` | 201 | `{"id":5,"project_id":1,"title":"write docs",...}` |
 
 201 の `id` は、それまでに作った Task の数によって変わる。
 
@@ -631,24 +634,26 @@ Chapter 02 で観測した4つの問題がすべて解消した。
 
 ### 実行
 
-Chapter 06 で実施する検証を先取りして見る。DB 側で必ず失敗する状況を作る。
+この Step は読むだけでよい。DB 側で必ず失敗する状況は Chapter 06 で作るので、実際に動かすのはそこになる。ここでは、分類できないエラーが起きたときに何がどこへ出るかだけ押さえる。
 
 ### 期待結果
 
-**利用者に返るもの。**
+利用者には、一般的な文言だけが返る。
 
 ```json
 {"error":{"code":"internal_error","message":"internal server error"}}
 ```
 
-**サーバログに残るもの**（検証環境での実際の出力）。
+サーバログには詳細が残る。この章の `respondError` は `log.Printf` で出力するので、次のような1行になる。
 
 ```text
-{"level":"ERROR","msg":"unexpected error","error":"insert task history: ERROR: new row for relation \"task_history\" violates check constraint \"reject_done\" (SQLSTATE 23514)"}
+2026/09/25 09:16:48 unexpected error: insert task history: ERROR: new row for relation "task_history" violates check constraint "reject_done" (SQLSTATE 23514)
 ```
 
+Chapter 05 で `log/slog` に切り替えると、同じ内容が JSON 形式で出るようになる。
+
 > **POINT**
-> ログ側にはテーブル名・制約名・SQLSTATE がすべて残る。**調査に必要な情報は捨てず、利用者には渡さない。**
+> ログ側にはテーブル名・制約名・SQLSTATE がすべて残る。調査に必要な情報は捨てず、利用者には渡さない。
 > Chapter 02 の実装では、この文字列がそのまま HTTP Response の Body になっていた。
 
 ---
@@ -675,18 +680,10 @@ Chapter 06 で実施する検証を先取りして見る。DB 側で必ず失敗
 
 両方必要になる。役割が違う。
 
-```mermaid
-flowchart LR
-    A[外部入力] --> B[Application Validation]
-    B -->|利用者に分かる文言で 400| A
-    B --> C[DB Constraint]
-    C -->|最後の砦。500 でも構わない| D[(保存)]
-```
-
 | | Application Validation | DB Constraint |
 |---|---|---|
-| 目的 | 利用者へ**理由を伝える** | データの**整合性を守る** |
-| 返せるもの | 「title is required」 | SQLSTATE のみ |
+| 目的 | 利用者へ理由を伝える | データの整合性を守る |
+| 返せるもの | 「title is required」 | SQLSTATE や制約名など、機械向けの情報 |
 | 守れる範囲 | この API を通った入力だけ | 直接 SQL を叩いた場合も含む |
 | 抜け道 | 別の API、バッチ、手動 SQL | なし |
 
@@ -700,10 +697,10 @@ Application 側だけだと、管理用スクリプトや別経路からの書�
 |---|---|
 | `ValidationError` + `Validate()` | 空 title / 範囲外 priority が保存される |
 | `DisallowUnknownFields()` | typo が黙って無視される |
-| sentinel error + `errors.Is` | 存在しない資源が 500 になる |
+| sentinel error + `errors.Is` | 存在しない Task / Project が 500 になる |
 | `respondError` への集約 | Status の付け方がバラバラになる |
 | `PublicError` | 409 のメッセージが常に同じで意味が伝わらない |
 | SQLSTATE の翻訳 | 外部キー違反が 500 になる |
 | 既定の 500 文言 | DB の内部情報が利用者へ漏れる |
 
-次は [Chapter 04: 認証・認可・IDOR](./chapter04_auth.md)。現時点では**誰でも全ての Task を読み書きできる**状態なので、これを塞ぐ。
+次は [Chapter 04: 認証・認可・IDOR](./chapter04_auth.md)。現時点では誰でも全ての Task を読み書きできる状態なので、これを塞ぐ。

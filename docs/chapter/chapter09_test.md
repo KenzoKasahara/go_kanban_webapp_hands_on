@@ -2,7 +2,7 @@
 
 ## この章の目的
 
-ここまで実機で確認してきた挙動を、**繰り返し自動で検証できる形**に固定する。
+ここまで実機で確認してきた挙動を、繰り返し自動で検証できる形に固定する。
 
 4種類のテストを、それぞれ何に使うのかを区別して書く。
 
@@ -30,21 +30,7 @@
 
 ## テストピラミッド
 
-```mermaid
-flowchart TD
-    subgraph P[" "]
-        direction TB
-        L["Load Test<br/>数分 / 実環境に近い構成<br/>「負荷をかけると何が劣化するか」"]
-        I["Integration Test<br/>秒単位 / 実 DB<br/>「HTTP から DB まで繋がっているか」"]
-        S["Service Test<br/>ミリ秒 / Fake Repository<br/>「Service の判断は正しいか」"]
-        U["Unit Test<br/>ミリ秒 / 依存なし<br/>「業務ルールは正しいか」"]
-    end
-    L --- I --- S --- U
-    style U fill:#e0ffe0,color:#000
-    style S fill:#e8f8e0,color:#000
-    style I fill:#fff8e0,color:#000
-    style L fill:#ffe8e0,color:#000
-```
+![下から Unit / Service / Integration / Load の4層。下ほど速く数を多く書け、上ほど遅いが実際の構成に近い](../images/chapter09_test/test_pyramid.svg)
 
 下ほど速く、数を多く書ける。上ほど遅いが、実際の構成に近い。**同じことを複数の層でテストしない。**
 
@@ -54,11 +40,11 @@ flowchart TD
 
 ### Step 1. 状態遷移をテストする
 
-### やること
+#### やること
 
-`model.CanTransition` の全パターンをテストする。
+`model.CanTransition` の全パターンをテストする。既知の3状態どうしの組み合わせ9通りと、未知の状態を渡した2通りを並べる。
 
-### 実行
+#### 実行
 
 `internal/model/task_test.go`。
 
@@ -71,8 +57,8 @@ import (
 	"example.com/go-kanban/internal/model"
 )
 
-// Table Driven Test:
-// 条件をsliceへまとめ、同じ検証処理を繰り返す。
+// Table Driven Test
+// 条件を slice へまとめ、同じ検証処理を繰り返す。
 // 条件の追加が1行で済み、どの条件が落ちたかも名前で分かる。
 func TestCanTransition(t *testing.T) {
 	t.Parallel()
@@ -89,7 +75,9 @@ func TestCanTransition(t *testing.T) {
 		{"done back to doing", model.StatusDone, model.StatusDoing, true},
 		{"todo to done is not allowed", model.StatusTodo, model.StatusDone, false},
 		{"done to todo is not allowed", model.StatusDone, model.StatusTodo, false},
-		{"same status is not a transition", model.StatusTodo, model.StatusTodo, false},
+		{"todo to todo is not a transition", model.StatusTodo, model.StatusTodo, false},
+		{"doing to doing is not a transition", model.StatusDoing, model.StatusDoing, false},
+		{"done to done is not a transition", model.StatusDone, model.StatusDone, false},
 		{"unknown source status", "archived", model.StatusTodo, false},
 		{"unknown target status", model.StatusTodo, "archived", false},
 	}
@@ -127,10 +115,7 @@ Go で最も一般的なテストの書き方。
 | `t.Parallel()` | 並列実行して高速化する |
 | 匿名 struct の slice | ケース追加が1行で済む |
 
-`t.Errorf` と `t.Fatalf` の違い。
-
-- `t.Errorf` — 失敗を記録して**続行**する。他のケースも確認したいとき
-- `t.Fatalf` — 失敗を記録して**即座に中断**する。以降の処理が無意味なとき
+`t.Errorf` は失敗を記録して、そのまま続ける。他のケースも確認したいときに使う。`t.Fatalf` は失敗を記録して、その場でテストを止める。以降の処理が無意味なときに使う。
 
 </details>
 
@@ -138,11 +123,11 @@ Go で最も一般的なテストの書き方。
 
 ### Step 2. 境界値をテストする
 
-### やること
+#### やること
 
 Chapter 03 で触れた「rune 数で数える」挙動を、テストで固定する。
 
-### 実行
+#### 実行
 
 ```go
 // 日本語など、1文字が複数byteになる入力でも
@@ -215,8 +200,7 @@ func TestCreateTaskInputValidate(t *testing.T) {
 ```
 
 > **POINT**
-> `"100 文字はOK、101 文字はNG"` という境界のテストがあると、`len([]rune(...))` を `len(...)` に書き換えるリファクタリングで即座に落ちる。
-> **境界値は、仕様が壊れたことを一番早く教えてくれる。**
+> 「100 文字は OK、101 文字は NG」という境界のテストがあれば、`len([]rune(...))` を `len(...)` に書き換えた時点で落ちる。仕様が壊れたことに一番早く気づけるのは、こういう境界のテストだ。
 
 ---
 
@@ -224,11 +208,11 @@ func TestCreateTaskInputValidate(t *testing.T) {
 
 ### Step 3. DB なしで Service を検証する
 
-### やること
+#### やること
 
 Repository の interface を Fake に差し替え、Service の判断だけを検証する。
 
-### 実行
+#### 実行
 
 `internal/service/task_test.go`（抜粋）。
 
@@ -273,20 +257,21 @@ func (f *fakeTaskRepo) UpdateStatusWithHistory(
 // （Create / ListByProject / Search も interface を満たすために実装する）
 ```
 
-テスト本体。
+テスト本体。`ErrForbidden` のような決まった値のエラーは `errors.Is` で比べる。`ValidationError` は入力ごとにメッセージが違う型なので、`errors.As` で型だけを確認する。この2つを `wantErr` と `wantValidationErr` で分けている。
 
 ```go
 func TestChangeStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		currentStatus string
-		newStatus     string
-		role          string
-		findErr       error
-		wantErr       error
-		wantUpdate    bool
+		name              string
+		currentStatus     string
+		newStatus         string
+		role              string
+		findErr           error
+		wantErr           error
+		wantValidationErr bool
+		wantUpdate        bool
 	}{
 		{
 			name:          "member can move todo to doing",
@@ -303,11 +288,11 @@ func TestChangeStatus(t *testing.T) {
 			wantErr:       model.ErrForbidden,
 		},
 		{
-			name:          "todo to done is rejected by business rule",
-			currentStatus: model.StatusTodo,
-			newStatus:     model.StatusDone,
-			role:          model.RoleOwner,
-			wantErr:       nil, // ValidationError
+			name:              "todo to done is rejected by business rule",
+			currentStatus:     model.StatusTodo,
+			newStatus:         model.StatusDone,
+			role:              model.RoleOwner,
+			wantValidationErr: true,
 		},
 		{
 			name:          "inaccessible task looks like not found",
@@ -338,18 +323,18 @@ func TestChangeStatus(t *testing.T) {
 				if err != nil {
 					t.Fatalf("expected success, got %v", err)
 				}
-			case tt.wantErr != nil:
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("expected %v, got %v", tt.wantErr, err)
-				}
-			default:
+			case tt.wantValidationErr:
 				var validationErr *model.ValidationError
 				if !errors.As(err, &validationErr) {
 					t.Fatalf("expected ValidationError, got %v", err)
 				}
+			default:
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected %v, got %v", tt.wantErr, err)
+				}
 			}
 
-			// 拒否されたRequestで DB 更新が呼ばれていないことも確認する。
+			// 拒否されたリクエストで DB 更新が呼ばれていないことも確認する。
 			if !tt.wantUpdate && tasks.updateCallCount != 0 {
 				t.Fatalf("repository must not be called when rejected, got %d calls",
 					tasks.updateCallCount)
@@ -359,20 +344,20 @@ func TestChangeStatus(t *testing.T) {
 }
 ```
 
-### Fake でしか検証できないこと
+#### Fake でしか検証できないこと
 
 `updateCallCount` の確認に注目する。
 
 ```go
-// 拒否されたRequestで DB 更新が呼ばれていないことも確認する。
+// 拒否されたリクエストで DB 更新が呼ばれていないことも確認する。
 if !tt.wantUpdate && tasks.updateCallCount != 0 {
 ```
 
-「403 が返った」だけなら実 DB でも確認できる。しかし「**DB の更新処理が呼ばれていない**」ことは、Fake を使わないと検証できない。
+「403 が返った」だけなら実 DB でも確認できる。しかし「DB の更新処理が呼ばれていない」ことは、Fake を使わないと検証できない。
 
 実装が「先に UPDATE してから権限チェックして、駄目ならロールバック」に変わっても、レスポンスは 403 のままで気づけない。Fake なら落ちる。
 
-### 副作用の失敗が主処理に影響しないことを検証する
+#### 副作用の失敗が主処理に影響しないことを検証する
 
 ```go
 // 通知の失敗で Task 更新を失敗にしないことを確認する。
@@ -410,7 +395,7 @@ func TestChangeStatusSucceedsWhenNotificationFails(t *testing.T) {
 }
 ```
 
-Chapter 07 で決めた設計判断を、テストとして固定した。**実際の外部 API を落とさずに「落ちたとき」を検証できる。**
+Chapter 07 で決めた設計判断を、テストとして固定した。本物の外部 API を落とさなくても、「落ちたとき」の挙動を確かめられる。
 
 ---
 
@@ -418,11 +403,11 @@ Chapter 07 で決めた設計判断を、テストとして固定した。**実�
 
 ### Step 4. 実 DB に対して HTTP から検証する
 
-### やること
+#### やること
 
 `httptest.Server` で実際のアプリを起動し、HTTP クライアントとして叩く。
 
-### 実行
+#### 実行
 
 Build tag で通常のテストから分離する。`test/integration_test.go`。
 
@@ -448,7 +433,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 		t.Fatalf("connect db: %v", err)
 	}
 
-	// Test間で状態が残らないよう、毎回初期化する。
+	// テスト間で状態が残らないよう、毎回初期化する。
 	_, err = pool.Exec(context.Background(),
 		`TRUNCATE tasks, project_members, projects, sessions, users,
 		 task_history, idempotency_keys RESTART IDENTITY CASCADE`)
@@ -478,7 +463,7 @@ Cookie を自動で扱うクライアント。
 func newClient(t *testing.T, baseURL string) *client {
 	t.Helper()
 
-	// Cookie Jar を持たせると、Login後のSession Cookieが自動で送られる。
+	// Cookie Jar を持たせると、ログイン後の Session Cookie を http.Client が自動で送る。
 	jar, err := newJar()
 	if err != nil {
 		t.Fatalf("cookie jar: %v", err)
@@ -488,18 +473,18 @@ func newClient(t *testing.T, baseURL string) *client {
 }
 ```
 
-`app.New()` に依存を注入できる設計（Chapter 05）が、ここで効いてくる。グローバル変数の `pool` が残っていたら、テストごとに別の DB へ向けることができない。
+`app.New()` に依存を注入できる設計（Chapter 05）が、ここで効いてくる。グローバル変数の `pool` が残っていたら、テストごとに別の DB へ向けられない。
 
 ---
 
 ### Step 5. 認可シナリオをテストする
 
-### 実行
+#### 実行
 
 `test/scenario_test.go`（抜粋）。
 
 ```go
-// 認証・認可・IDOR を、実際のHTTPとDBを通して確認する。
+// 認証・認可・IDOR を、実際の HTTP と DB を通して確認する。
 func TestAuthorizationScenario(t *testing.T) {
 	server, _ := newTestServer(t)
 
@@ -531,11 +516,11 @@ func TestAuthorizationScenario(t *testing.T) {
 	// 本人は読める。
 	alice.mustStatus(http.StatusOK, http.MethodGet, taskPath(task.ID, ""), nil)
 
-	// 他人からは「存在しない」ように見える。403 を返すと、そのIDのTaskが
-	// 存在することを攻撃者へ教えることになる。
+	// 他人からは「存在しない」ように見える。403 を返すと、その ID の Task が
+	// 存在することを攻撃者へ教えてしまう。
 	bob.mustStatus(http.StatusNotFound, http.MethodGet, taskPath(task.ID, ""), nil)
 
-	// Project外のUserは一覧も作成もできない。
+	// Project 外のユーザーは一覧も作成もできない。
 	bob.mustStatus(http.StatusForbidden, http.MethodGet, projectPath(project.ID, "/tasks"), nil)
 	bob.mustStatus(http.StatusForbidden, http.MethodPost, projectPath(project.ID, "/tasks"),
 		map[string]string{"title": "intruder", "priority": "low"})
@@ -548,32 +533,32 @@ func TestAuthorizationScenario(t *testing.T) {
 	bob.mustStatus(http.StatusForbidden, http.MethodPost, projectPath(project.ID, "/tasks"),
 		map[string]string{"title": "intruder", "priority": "low"})
 
-	// Logout後はSessionが無効になる。
+	// ログアウト後は Session が無効になる。
 	alice.mustStatus(http.StatusNoContent, http.MethodPost, "/logout", nil)
 	alice.mustStatus(http.StatusUnauthorized, http.MethodGet, taskPath(task.ID, ""), nil)
 }
 ```
 
-Chapter 04 で curl を使って手で確認したことが、**自動で再実行できる**ようになった。
+Chapter 04 で curl を使って手で確認したことを、いつでも自動で再実行できるようになった。
 
 ---
 
 ### Step 6. DB の状態まで検証する
 
-### やること
+#### やること
 
 HTTP のレスポンスだけでなく、DB に何が書かれたかを確認する。
 
-### 実行
+#### 実行
 
 ```go
-// Task更新と履歴追加が、同時に成功するか同時に失敗するかを確認する。
+// Task 更新と履歴追加が、同時に成功するか同時に失敗するかを確認する。
 func TestStatusChangeWritesHistoryAtomically(t *testing.T) {
 	server, pool := newTestServer(t)
 
 	// （alice の登録・ログイン・Project と Task の作成は省略）
 
-	// 許可されない遷移は 400 で、DBは変わらない。
+	// 許可されない遷移は 400 で、DB は変わらない。
 	alice.mustStatus(http.StatusBadRequest, http.MethodPatch, taskPath(task.ID, "/status"),
 		map[string]any{"status": "done", "version": 1})
 
@@ -597,7 +582,7 @@ func TestStatusChangeWritesHistoryAtomically(t *testing.T) {
 ```
 
 > **POINT**
-> **拒否されたリクエストで DB が変わっていないこと**まで確認している。
+> 拒否されたリクエストで DB が変わっていないことまで確認している。
 > 「400 が返った」だけでは、DB に書いてからロールバックしたのか、そもそも書いていないのか区別できない。
 
 冪等性の検証。
@@ -634,7 +619,7 @@ func TestIdempotentTaskCreation(t *testing.T) {
 
 ### Step 7. テストを実行する
 
-### 実行
+#### 実行
 
 ```bash
 # Unit / Service / Notify（DB 不要）
@@ -647,7 +632,7 @@ go test -race ./...
 go test -tags=integration ./test/...
 ```
 
-### 期待結果
+#### 期待結果
 
 検証環境での実際の出力。
 
@@ -685,19 +670,19 @@ PASS
 <details>
 <summary>GO NOTE: <code>-race</code> と Build Tag</summary>
 
-**`-race`（Race Detector）**
+`-race`（Race Detector）
 
-複数の goroutine が同じメモリを、少なくとも一方が書き込みで、同期なしにアクセスしている箇所を検出する。[Chapter 06 Part 1](./chapter06_transaction.md#part-1-goroutine-と-race-condition) で、実際に `DATA RACE` を検出した。
+複数の goroutine が同じメモリを、少なくとも一方が書き込みで、同期なしにアクセスしている箇所を検出する。[Chapter 06 Part 1](./chapter06_transaction.md#part-1-goroutine-と-data-race) で、実際に `DATA RACE` を検出した。
 
 ```bash
 go test -race ./...
 ```
 
-実行速度は数倍遅くなり、メモリも増える。CI では有効にし、ローカルの高速な反復では外す、という運用が一般的になる。
+実行速度は数倍遅くなり、メモリも増える。CI では有効にして、ローカルで素早く回すときは外す運用がよく見られる。
 
-Chapter 08 の `LogFields` はポインタ経由で書き換えているため、`-race` で問題が出ないことを確認する価値がある（1 Request = 1 goroutine なので問題は出ない）。
+Chapter 08 の `LogFields` はポインタ経由で書き換えているので、競合しないか `-race` で確かめておきたい。1 リクエストを 1 goroutine が処理するため、実際には検出されない。
 
-**Build Tag**
+Build Tag
 
 ```go
 //go:build integration
@@ -719,17 +704,16 @@ Chapter 08 の `LogFields` はポインタ経由で書き換えているため�
 
 ### Step 8. k6 で負荷をかける
 
-### やること
+#### やること
 
 同時アクセス数を段階的に上げ、何が劣化するかを観察する。
 
-### 目的の確認
+#### 目的の確認
 
 > **POINT**
-> 「何ユーザーまで耐えたか」を競うのが目的ではない。
-> **負荷が増えたとき、どこが最初に悪化するか**を知ることが目的になる。
+> 知りたいのは「何ユーザーまで耐えたか」より、「負荷が増えたとき、どこが最初に悪化するか」のほう。
 
-### 実行
+#### 実行
 
 `scripts/load-test.js`。
 
@@ -757,7 +741,7 @@ export const options = {
   },
 };
 
-// setup は全VU開始前に1回だけ実行される。
+// k6 は setup を全 VU の開始前に1回だけ実行する。
 export function setup() {
   http.post(`${BASE_URL}/users`, JSON.stringify({ email: EMAIL, password: PASSWORD }), {
     headers: { 'Content-Type': 'application/json' },
@@ -823,7 +807,7 @@ docker run --rm -i \
 > **NOTE**
 > `host.docker.internal` は Docker Desktop（Windows / macOS）で使える。Linux の Docker Engine では `--add-host=host.docker.internal:host-gateway` を追加する。
 
-### 期待結果
+#### 期待結果
 
 検証環境での実際の出力（抜粋）。約 2 分で終わる。
 
@@ -858,9 +842,9 @@ docker run --rm -i \
 time="2026-09-25T01:49:36Z" level=error msg="thresholds on metrics 'http_req_duration' have been crossed"
 ```
 
-**エラーは 0 件だが、p95 / p99 のしきい値を超えた。** 中央値は 34ms なのに p95 は 1.34s になっている。一部のリクエストだけが極端に遅い。
+エラーは 0 件だが、p95 / p99 のしきい値を超えた。中央値は 34ms なのに p95 は 1.34s になっている。一部のリクエストだけが極端に遅い。
 
-### 何が起きたのか
+#### 何が起きたのか
 
 サーバログの `duration_ms` と `bytes` を、負荷の段階ごとに集計した。
 
@@ -872,11 +856,11 @@ time="2026-09-25T01:49:36Z" level=error msg="thresholds on metrics 'http_req_dur
 | 90〜120s | 100 → 0 | 1354 | 42ms | 1.1MB | 9ms |
 
 > **観測された問題**
-> VU を 10 → 50 → 100 と増やしたのに、**処理できた件数は減った**。
+> VU を 10 → 50 → 100 と増やしたのに、処理できた件数は減った。
 > スクリプトは1回ごとに Task を1件作る。一覧 API はページングなしで全件を返すので、Task が増えるほどレスポンスが大きくなる。最後は 9566 件、1 回 1.2MB になった。
-> 2 分間で受信したデータは 5.9GB。**負荷の正体は同時アクセス数ではなく、レスポンスサイズの増加**だった。
+> 2 分間で受信したデータは 5.9GB。遅くしていたのは同時アクセス数そのものより、膨らみ続けるレスポンスのほうだった。
 
-サーバ側の p95 は最大 42ms で、k6 が測った p95（1.34s）よりはるかに小さい。差の大部分は、大きなレスポンスを Client へ運ぶ時間になる。1.2MB の一覧を1件だけ取得して比べると、この経路の差が分かる。
+サーバ側の p95 は最大 42ms で、k6 が測った p95（1.34s）よりはるかに小さい。差の大部分は、大きなレスポンスをクライアントへ運ぶのにかかっている。1.2MB の一覧を1件だけ取得して比べると、この経路の差が分かる。
 
 | 取得元 | 応答時間（3回） |
 |---|---|
@@ -886,7 +870,7 @@ time="2026-09-25T01:49:36Z" level=error msg="thresholds on metrics 'http_req_dur
 k6 をコンテナで動かすと、Docker Desktop の仮想ネットワークを通る分だけ転送が遅くなる。100 VU が 1MB 級のレスポンスを同時に受け取ると、この経路の帯域（今回は約 49MB/s）が詰まり、待ち時間が p95 / p99 に現れる。
 
 > **POINT**
-> k6 の数値は「Client から見た時間」で、ネットワークや負荷をかける側の環境も含む。サーバログの `duration_ms` は「サーバが処理した時間」になる。**両方を並べて見ると、遅さがサーバの中にあるのか外にあるのかを切り分けられる。**
+> k6 の数値は「クライアントから見た時間」で、ネットワークや負荷をかける側の環境も含む。サーバログの `duration_ms` は「サーバが処理した時間」だけを表す。両方を並べれば、遅さがサーバの中にあるのか外にあるのかを切り分けられる。
 > 今回はサーバ側も 14ms → 42ms と悪化しており、レスポンスが大きくなるほど JSON の生成と書き込みが重くなっていることも分かる。
 
 直すなら、一覧 API にページング（`LIMIT` と、次のページを示すカーソルや `offset`）を入れて、1 回に返す件数に上限を設ける。本ハンズオンでは実装せず、[残っている改善候補](#残っている改善候補)に挙げている。
@@ -900,22 +884,22 @@ k6 をコンテナで動かすと、Docker Desktop の仮想ネットワーク�
 >   "DELETE FROM projects WHERE name = 'load test';"
 > ```
 
-### 何を観察するか
+#### 何を観察するか
 
 | 指標 | 見方 |
 |---|---|
-| **p50（中央値）** | 半数の利用者が体験する速度 |
-| **p95** | 20人に1人が体験する遅さ |
-| **p99** | 100人に1人が体験する遅さ。ここが実際のクレームになる |
-| avg（平均） | **単独で見ない**。外れ値に引きずられる、あるいは埋もれる |
+| p50（中央値） | 半数の利用者が体験する速度 |
+| p95 | 20人に1人が体験する遅さ |
+| p99 | 100人に1人が体験する遅さ。ここが実際のクレームになる |
+| avg（平均） | 単独で見ない。外れ値に引きずられる、あるいは埋もれる |
 | Throughput（req/s） | 処理量。頭打ちになる点が限界 |
 | Error Rate | 負荷で失敗し始める点 |
 
 > **POINT**
 > 平均応答時間だけを見ると、「一部の利用者だけが 5 秒待たされている」状況を見逃す。
-> 1000 件のうち 990 件が 10ms、10 件が 5000ms なら、平均は 60ms になる。**p99 は 5000ms**。
+> 1000 件のうち 980 件が 10ms、20 件が 5000ms なら、平均は約 110ms で、それほど悪く見えない。一方、p99 は 5000ms になる。
 
-### アプリ以外も見る
+#### アプリ以外も見る
 
 ```text
 負荷をかけながら、同時に観察する
@@ -936,7 +920,7 @@ grep http_request server.log | grep -E '"duration_ms":[0-9]{3,}'
 
 Chapter 08 で入れた `duration_ms` が、ここで使える。
 
-### 負荷テストで見つかりやすい問題
+#### 負荷テストで見つかりやすい問題
 
 | 問題 | 現れ方 |
 |---|---|
@@ -949,7 +933,7 @@ Chapter 08 で入れた `duration_ms` が、ここで使える。
 
 > **WARNING**
 > 高い VU 数（500 以上など）は、負荷をかける側のマシンや、共有環境の他システムに影響する。
-> **実行前に環境を確認する。** 共有環境や本番に近い環境では、事前の合意なく実行しない。
+> 実行前に環境を確認する。共有環境や本番に近い環境では、事前の合意なく実行しない。
 
 ---
 
@@ -957,11 +941,11 @@ Chapter 08 で入れた `duration_ms` が、ここで使える。
 
 ### Step 9. 責務を振り返る
 
-### やること
+#### やること
 
 機能追加ではなく、ここまで増えた責務を整理する。
 
-### 判断基準
+#### 判断基準
 
 ```text
 このコードは、何が変わったときに変更が必要になるか？
@@ -972,9 +956,9 @@ Chapter 08 で入れた `duration_ms` が、ここで使える。
   ドメインの概念そのもの                  → Model
 ```
 
-**1つのファイルが複数の理由で変更されるなら、分割を検討する。**
+1つのファイルが複数の理由で変更されるなら、分割を検討する。
 
-### 現在の構成を確認する
+#### 現在の構成を確認する
 
 ```text
 internal/
@@ -983,25 +967,25 @@ internal/
 ├── service/       133 + 115 + 45 行         業務判断のみ
 ├── handler/       156 + 94 + 78 + 105 行    HTTP 変換のみ
 ├── httpx/         151 行                    handler / middleware の共通語彙
-├── middleware/    36 + 106 + 95 行          全 Request 共通の前処理
+├── middleware/    36 + 106 + 95 行          全リクエスト共通の前処理
 ├── notify/        148 行                    外部 API と Retry
 └── app/           依存の組み立てとルーティング
 ```
 
 Chapter 04 時点では `cmd/api/` に5ファイル865行、`main.go` だけで378行だった。
 
-### やらないこと
+#### やらないこと
 
 > **WARNING**
 > 「綺麗に見えるから」という理由だけで interface や package を増やさない。
 
-このハンズオンで抽象化を導入した箇所と、その**具体的な理由**。
+このハンズオンで抽象化を導入した箇所と、その具体的な理由。
 
 | 導入したもの | 具体的な理由 |
 |---|---|
 | `TaskRepository` interface | Fake に差し替えて Service を DB なしでテストするため |
 | `Notifier` interface | 外部 API を落とさずに失敗時の挙動をテストするため |
-| `httpx` package | **import cycle のコンパイルエラーを解消するため** |
+| `httpx` package | import cycle のコンパイルエラーを解消するため |
 | `app.New()` の引数注入 | テストごとに別の設定・DB を渡すため |
 
 いずれも「そうしないと困る」という具体的な問題があった。逆に、次のものは導入していない。
@@ -1013,7 +997,7 @@ Chapter 04 時点では `cmd/api/` に5ファイル865行、`main.go` だけで3
 | Repository ごとの独立した interface ファイル | 実装と並べたほうが対応を追いやすい |
 | ドメインイベント / CQRS | 今の規模では複雑さだけが増える |
 
-### 残っている改善候補
+#### 残っている改善候補
 
 <details>
 <summary>このハンズオンで意図的に残した課題</summary>
@@ -1037,22 +1021,11 @@ Chapter 04 時点では `cmd/api/` に5ファイル865行、`main.go` だけで3
 
 ## この章のまとめ
 
-| 導入したもの | 固定した挙動 |
-|---|---|
-| Table Driven Test | 状態遷移の全 9 パターン |
-| 境界値テスト | 100 rune は OK、101 rune は NG |
-| Fake Repository | 拒否時に DB 更新が**呼ばれない**こと |
-| `failingNotifier` | 通知失敗が主処理を失敗させないこと |
-| `httptest.Server` + 実 DB | 認証・認可・IDOR の一連のシナリオ |
-| DB 状態のアサーション | 拒否時に DB が変わらないこと、履歴が原子的であること |
-| Build Tag | DB 不要のテストを高速に保つ |
-| `-race` | 競合状態がないこと |
-
 | テスト結果 | 値 |
 |---|---|
 | `go test ./...` | 全パス |
 | `go test -race ./...` | 全パス |
-| Integration（4シナリオ） | 全パス、0.81 秒 |
+| Integration（4 シナリオ） | 全パス、0.81 秒 |
 | k6 負荷テスト（Docker） | エラー 0%。p95 1.34s / p99 2.39s でしきい値超過。原因はページングのない一覧 |
 
 ---
@@ -1094,6 +1067,6 @@ Chapter 02 で作ったものと、Chapter 09 時点のものを比べる。
 | 変更履歴 | なし | Transaction 内の監査ログ |
 | 検証 | 手動 | 自動テスト |
 
-このハンズオンの成果物はアプリケーションそのものではなく、**コードを見て「本番ではここが危険」と自分で発見し、再現・修正・テストできる判断力**になる。
+手元に残るのはカンバンアプリだけではない。コードを読んで「本番ではここが危ない」と自分で気づき、再現して、直して、テストで固定する。その一連の手順を、ここまでの章で一度ずつ通ってきた。
 
 お疲れさまでした。片付けは [README の「片付け」](./README.md#片付け)を参照する。

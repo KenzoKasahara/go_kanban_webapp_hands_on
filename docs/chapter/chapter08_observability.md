@@ -2,18 +2,18 @@
 
 ## この章の目的
 
-ここまで作った仕組みは、障害が起きたときに**追跡できる状態になっていない**。「500 が返った」という報告を受けても、どのリクエストが、誰の操作で、どこで失敗したのかを特定できない。
+ここまで作った仕組みは、障害が起きたときに追跡できる状態になっていない。「500 が返った」という報告を受けても、どの Request が、誰の操作で、どこで失敗したのかを特定できない。
 
 この章で2種類のログを整える。
 
 | | 通常ログ | 監査ログ（Audit Log） |
 |---|---|---|
-| 記録するもの | システムで何が起きたか | **誰が、いつ、何を変更したか** |
+| 記録するもの | システムで何が起きたか | 誰が、いつ、何を変更したか |
 | 主な用途 | 障害調査、性能分析 | 変更履歴の追跡、責任の所在 |
 | 保存先 | 標準出力 → ログ基盤 | DB（`task_history`） |
 | 保存期間 | 数日〜数か月 | 業務要件による（数年のことも） |
 
-そして、**ログに出してはいけないもの**を明確にする。
+あわせて、ログに出してはいけないものも決めておく。
 
 ## 現在地
 
@@ -22,10 +22,10 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 ## 完了条件
 
 - [ ] 1 Request につき 1 行の構造化ログ（JSON）が出る
-- [ ] `request_id` でリクエストを追跡できる
+- [ ] `request_id` で Request を追跡できる
 - [ ] ログに `user_id` が含まれる
 - [ ] 500 が ERROR レベルで記録される
-- [ ] **Cookie / パスワード / Session ID がログに出ていない**ことを確認した
+- [ ] Cookie / パスワード / Session ID がログに出ていないことを確認した
 - [ ] `task_history` から「誰がいつ何を変えたか」を追える
 
 ---
@@ -42,7 +42,7 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 
 人間には読めるが、次のことができない。
 
-- 「500 になったリクエストだけ」を抽出する
+- 「500 になった Request だけ」を抽出する
 - 「応答時間が 1 秒を超えたもの」を集計する
 - 「user_id=1 の操作」を追う
 
@@ -51,15 +51,15 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 ### 構造化ログ（JSON）
 
 ```json
-{"time":"2026-09-25T00:16:04.59Z","level":"INFO","msg":"http_request","request_id":"ca6440b20c408753","method":"GET","path":"/tasks/1","status":200,"duration_ms":3,"bytes":127,"user_id":1}
+{"time":"2026-09-25T00:16:04.5955146+09:00","level":"INFO","msg":"http_request","request_id":"ca6440b20c408753","method":"GET","path":"/tasks/1","status":200,"duration_ms":3,"bytes":127,"user_id":1}
 ```
 
 キーと値が分かれているため、ログ基盤側でそのまま検索・集計・アラート設定ができる。
 
 ```text
 status >= 500                     → エラー率のアラート
-duration_ms > 1000                → 遅いリクエストの抽出
-request_id = "ca6440b2..."        → 1リクエストの全ログを収集
+duration_ms > 1000                → 遅い Request の抽出
+request_id = "ca6440b2..."        → 1 Request の全ログを収集
 user_id = 1 AND status = 403      → 特定ユーザーの権限エラー
 ```
 
@@ -73,7 +73,7 @@ Go 標準の `log/slog` で JSON ログを出す。
 
 ### 実行
 
-`cmd/api/main.go`。
+`cmd/api/main.go` の `main` で logger を作り、デフォルトに設定する。
 
 ```go
 func main() {
@@ -90,7 +90,7 @@ func main() {
 }
 ```
 
-標準出力へ書く。ファイルへのローテーションや転送は、コンテナ基盤やログ収集エージェントの仕事にする。アプリがファイル管理まで抱えると、コンテナ環境で扱いづらくなる。
+出力先は標準出力にする。ファイルへのローテーションや転送は、コンテナ基盤やログ収集エージェントに任せる。アプリがファイル管理まで抱えると、コンテナ環境で扱いづらくなる。
 
 ---
 
@@ -102,7 +102,7 @@ func main() {
 
 ### 実行
 
-`internal/middleware/observability.go`。
+`internal/middleware/observability.go` に middleware を追加する。
 
 ```go
 const RequestIDHeader = "X-Request-Id"
@@ -137,13 +137,9 @@ func newRequestID() string {
 
 | 判断 | 理由 |
 |---|---|
-| Request ヘッダに既にあれば**それを使う** | ロードバランサや呼び出し元サービスが発行した ID を引き継ぐ。マイクロサービス間で同じ ID を辿れる |
-| Response ヘッダに**返す** | 利用者からの問い合わせ時に「この ID で調べてください」と言える |
-| Session ID とは**別物** | Session ID は秘密情報。ログにも Response ヘッダにも出せない |
-
-> **POINT**
-> Request ID を Response に返すと、「500 になりました」という報告に ID が添えられる。
-> ログ基盤でその ID を検索すれば、**そのリクエストで起きたことだけ**が取り出せる。
+| Request ヘッダに既にあればそれを使う | ロードバランサや呼び出し元サービスが発行した ID を引き継ぐ。マイクロサービス間で同じ ID を辿れる |
+| Response ヘッダに返す | 利用者から「500 になった」と問い合わせがあったとき、ID を添えてもらえる。ログ基盤でその ID を検索すれば、その Request で起きたことだけを取り出せる |
+| Session ID とは別物 | Session ID は秘密情報。ログにも Response ヘッダにも出せない |
 
 ---
 
@@ -155,7 +151,7 @@ func newRequestID() string {
 
 ### 実行
 
-Status を記録するためのラッパーが必要になる。
+まず、書き込まれた Status を記録するラッパーを用意する。
 
 ```go
 // statusRecorder は書き込まれたStatusを記録する。
@@ -179,7 +175,7 @@ func (w *statusRecorder) Write(b []byte) (int, error) {
 }
 ```
 
-ログ出力。
+このラッパーを使って、Handler の処理が終わった後に 1 行のログを出す。
 
 ```go
 // AccessLog は1Requestにつき1行の構造化ログを出す。
@@ -222,7 +218,7 @@ func AccessLog(logger *slog.Logger, next http.Handler) http.Handler {
 <details>
 <summary>GO NOTE: なぜ <code>statusRecorder</code> が必要なのか</summary>
 
-`http.ResponseWriter` は**書き込み専用**のインターフェースで、「さっき書いた Status は何番だったか」を読み出すメソッドがない。
+`http.ResponseWriter` は書き込み専用のインターフェースで、「さっき書いた Status は何番だったか」を読み出すメソッドがない。
 
 ```go
 type ResponseWriter interface {
@@ -242,7 +238,7 @@ type ResponseWriter interface {
 
 ### Step 5. Context の不変性でつまずく
 
-この実装には**最初うまくいかなかった箇所**がある。そのまま共有する。
+正直に書くと、この実装は最初うまく動かなかった。ハマった過程をそのまま載せる。
 
 ### 最初の実装
 
@@ -255,7 +251,7 @@ if user, ok := httpx.CurrentUser(r.Context()); ok {
 
 ### 観測された結果
 
-`user_id` がログに一切出なかった。認証は成功しており、Handler 側では `CurrentUser` が正しく User を返しているにもかかわらず。
+認証は成功していて、Handler 側の `CurrentUser` も正しく User を返している。それでも `user_id` がログに一切出なかった。
 
 ```json
 {"level":"INFO","msg":"http_request","request_id":"d8819f43341464bd","method":"POST","path":"/projects/1/tasks","status":201,"duration_ms":3,"bytes":130}
@@ -263,7 +259,7 @@ if user, ok := httpx.CurrentUser(r.Context()); ok {
 
 ### 原因
 
-`context.WithValue` は**新しい Context を作る**。元の Context は変更されない。
+`context.WithValue` は新しい Context を作る。元の Context は変更されない。
 
 ```mermaid
 flowchart TD
@@ -275,13 +271,13 @@ flowchart TD
     style D fill:#ffe0e0,color:#000
 ```
 
-`AccessLog` は `RequireAuth` より**外側**にある。内側で作られた新しい Context は、外側には届かない。
+`AccessLog` は `RequireAuth` より外側にある。内側で作られた新しい Context は、外側には届かない。
 
 ### 解決
 
-外側で**書き換え可能な入れ物**を用意し、内側がその中身を書き換える。
+外側で書き換え可能な入れ物を用意し、内側がその中身を書き換える。
 
-`internal/httpx/httpx.go`。
+入れ物は `internal/httpx/httpx.go` に定義する。
 
 ```go
 // LogFields は1Requestの間だけ共有される、書き換え可能なログ情報。
@@ -307,7 +303,7 @@ func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
 }
 ```
 
-`internal/middleware/auth.go` で書き込む。
+書き込むのは `internal/middleware/auth.go` の認証処理。
 
 ```go
 		// アクセスログへ user_id を載せる。
@@ -318,11 +314,11 @@ func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
 		next.ServeHTTP(w, r.WithContext(httpx.WithUser(r.Context(), user)))
 ```
 
-**入れ子の Context は値のコピーではなくポインタを運ぶ。** ポインタが指す先は共有されているため、内側の書き換えが外側から見える。
+今回 Context に入れたのは `LogFields` の値ではなくポインタなので、内側と外側が同じ実体を見ている。だから内側の書き換えが外側から見える。
 
 > **POINT**
-> 値を「渡す」だけなら `context.WithValue` でよい。**外側へ情報を返したい**ときは、ポインタを渡して中身を書き換える。
-> ただしこの方法は、複数の goroutine から同時に書くと data race になる（[Chapter 06 Part 1](./chapter06_transaction.md#part-1-goroutine-と-race-condition) で再現したもの）。1 Request が 1 goroutine で処理される前提でのみ成立する。
+> 値を「渡す」だけなら `context.WithValue` でよい。外側へ情報を返したいときは、ポインタを渡して中身を書き換える。
+> ただしこの方法は、複数の goroutine から同時に書くと data race になる（[Chapter 06 Part 1](./chapter06_transaction.md#part-1-goroutine-と-data-race) で再現したもの）。1 Request が 1 goroutine で処理される前提でのみ成立する。
 
 ---
 
@@ -330,37 +326,39 @@ func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
 
 ### 実行
 
+サーバーを起動し、別ターミナルから Request を送る。`/debug/slow` は Timeout まで 2 秒かかるので、`&` でバックグラウンド実行し、その間に次の Request を送る。
+
 ```bash
 curl -b alice.txt localhost:8080/tasks/1
 curl localhost:8080/health
-curl -b alice.txt 'localhost:8080/debug/slow?seconds=3'
+curl -b alice.txt 'localhost:8080/debug/slow?seconds=3' &
 curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
 ```
 
 ### 期待結果
 
-検証環境での実際の出力。
+検証環境では、次のログが出た。ログは Request の完了順に並ぶため、`/debug/slow` が最後になる。
 
 ```json
 {"time":"2026-09-25T00:16:04.5955146+09:00","level":"INFO","msg":"http_request","request_id":"ca6440b20c408753","method":"GET","path":"/tasks/1","status":200,"duration_ms":3,"bytes":127,"user_id":1}
 {"time":"2026-09-25T00:16:04.6265839+09:00","level":"INFO","msg":"http_request","request_id":"e0997692cdb945c4","method":"GET","path":"/health","status":200,"duration_ms":0,"bytes":16}
-{"time":"2026-09-25T00:16:06.658012+09:00","level":"ERROR","msg":"http_request","request_id":"14858361d43915a1","method":"GET","path":"/debug/slow","status":503,"duration_ms":2000,"bytes":59,"user_id":1}
 {"time":"2026-09-25T00:16:04.7048213+09:00","level":"INFO","msg":"http_request","request_id":"my-trace-123","method":"GET","path":"/tasks/1","status":200,"duration_ms":13,"bytes":127,"user_id":1}
+{"time":"2026-09-25T00:16:06.658012+09:00","level":"ERROR","msg":"http_request","request_id":"14858361d43915a1","method":"GET","path":"/debug/slow","status":503,"duration_ms":2000,"bytes":59,"user_id":1}
 ```
 
-確認できたこと。
+このログから、次のことが確認できる。
 
 | 項目 | 結果 |
 |---|---|
-| `user_id` | 認証済みリクエストにのみ付く（`/health` には無い） |
+| `user_id` | 認証済み Request にのみ付く（`/health` には無い） |
 | `request_id` | 自動生成される |
 | ヘッダ由来の ID | `my-trace-123` がそのまま使われている |
-| 503 のレベル | **ERROR**（`status >= 500` のため） |
+| 503 のレベル | ERROR（`status >= 500` のため） |
 | `duration_ms` | Timeout のケースで 2000 ms |
 
 > **NOTE**
 > 503（Timeout）が ERROR レベルになっている。これは「500 以上は ERROR」というルールの結果で、意図した挙動になる。
-> ただし Timeout は相手側の遅延が原因のこともあり、アラートを ERROR 全件に設定すると通知が多すぎる可能性がある。**運用時にレベル設計を見直す判断項目**として扱う。
+> ただし Timeout は相手側の遅延が原因のこともあり、アラートを ERROR 全件に設定すると通知が多すぎる可能性がある。運用時にレベル設計を見直す判断項目として扱う。
 
 ---
 
@@ -374,15 +372,28 @@ curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
 
 ### 実行
 
+検索するには、ログがファイルに残っている必要がある。Step 6 でサーバーを標準出力のまま起動していた場合は、`go-kanban` ディレクトリでログをファイルに書き出す形で起動し直し、Step 6 の curl をもう一度実行する。
+
+```bash
+go run ./cmd/api > server.log 2>&1
+```
+
+ログが溜まったら、機密情報に関係する文字列を数える。
+
 ```bash
 grep -icE 'kanban_session|password|set-cookie' server.log
 ```
 
 ### 期待結果
 
+一致した行数が表示される。0 なら漏洩していない。
+
 ```text
-matches: 0
+0
 ```
+
+> **NOTE**
+> 一致が 0 件のとき、`grep` は終了コード 1 を返す。スクリプトに組み込む場合は、失敗扱いにならないよう注意する。
 
 ### 出してはいけないもの
 
@@ -393,7 +404,7 @@ matches: 0
 | トークン | API Key、Authorization ヘッダ、JWT | 同上 |
 | 個人情報 | 不要なメールアドレス、氏名、住所 | 法規制の対象になりうる |
 | 決済情報 | カード番号、CVV | 保存自体が規制対象 |
-| リクエスト本文 | POST body 全体 | 上記のいずれかが含まれうる |
+| Request 本文 | POST body 全体 | 上記のいずれかが含まれうる |
 
 ### なぜ厳しく扱うのか
 
@@ -414,7 +425,7 @@ matches: 0
 // NG: ヘッダをまるごと出す
 slog.Any("headers", r.Header)        // Cookie も Authorization も含まれる
 
-// NG: リクエスト本文をそのまま出す
+// NG: Request 本文をそのまま出す
 slog.String("body", string(bodyBytes))  // password が含まれうる
 
 // OK: 必要な項目だけを明示的に選ぶ
@@ -471,7 +482,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 
 ### 期待結果
 
-検証環境での実際の出力。
+検証環境では、次の結果になった。
 
 ```text
  task_id | user_id |     action     | old_value | new_value
@@ -485,12 +496,12 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 
 | | 通常ログ（標準出力） | 監査ログ（DB） |
 |---|---|---|
-| 保存の確実性 | ログ基盤が落ちれば欠落しうる | **Transaction に含められる** |
+| 保存の確実性 | ログ基盤が落ちれば欠落しうる | Transaction に含められる |
 | 検索 | ログ基盤の機能に依存 | SQL で自由に検索できる |
-| 整合性 | Task の更新と別々に記録される | **Task の更新と同じ Transaction** |
+| 整合性 | Task の更新と別々に記録される | Task の更新と同じ Transaction |
 | 保存期間 | 数日〜数か月 | 業務要件に従って保持できる |
 
-Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task の更新も Rollback される。**「更新されたのに履歴がない」状態が原理的に発生しない。**
+Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task の更新も Rollback される。アプリ経由で更新する限り、「更新されたのに履歴がない」状態は起きない。
 
 ### 監査ログに記録する項目
 
@@ -503,11 +514,9 @@ Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task �
 | 変更前 | `old_value` | ○ |
 | 変更後 | `new_value` | ○ |
 | どこから | 未実装 | IP アドレス、User-Agent が求められることがある |
-| どのリクエストで | 未実装 | `request_id` を入れると通常ログと突き合わせられる |
+| どの Request で | 未実装 | `request_id` を入れると、その変更を行った Request の通常ログまで辿れる |
 
-> **POINT**
-> 監査ログに `request_id` を入れると、「この変更を行ったリクエストの通常ログ」まで辿れる。
-> 通常ログと監査ログが**同じ ID で繋がる**設計にしておくと、調査が一気に楽になる。
+通常ログと監査ログが同じ ID で繋がるようにしておくと、調査が一気に楽になる。
 
 ---
 
@@ -517,7 +526,7 @@ Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task �
 
 ```mermaid
 flowchart TD
-    A["利用者: 500 が返りました<br/>X-Request-Id: 14858361d43915a1"] --> B[ログ基盤でその ID を検索]
+    A["利用者: 503 が返りました<br/>X-Request-Id: 14858361d43915a1"] --> B[ログ基盤でその ID を検索]
     B --> C["http_request ログ<br/>status, duration_ms, user_id, path"]
     B --> D["unexpected error ログ<br/>エラーの詳細と発生箇所"]
     C --> E{原因の切り分け}
@@ -528,7 +537,7 @@ flowchart TD
     H --> I["task_history で<br/>そのユーザーの変更を確認"]
 ```
 
-Chapter 03 で設計した「**利用者には一般的な文言、ログには詳細**」が、ここで効いてくる。
+Chapter 03 で決めた「利用者には一般的な文言、ログには詳細」という方針が、ここで効いてくる。利用者には「internal error」としか返していなくても、ログには次のように原因が残っている。
 
 ```json
 {"level":"ERROR","msg":"unexpected error","error":"insert task history: ERROR: new row for relation \"task_history\" violates check constraint \"reject_done\" (SQLSTATE 23514)"}
@@ -541,20 +550,13 @@ Chapter 03 で設計した「**利用者には一般的な文言、ログには�
 | 導入したもの | 解決した問題 |
 |---|---|
 | `slog` による JSON ログ | 検索・集計・アラート設定ができない |
-| `request_id` の発行と伝播 | 1リクエストのログを絞り込めない |
+| `request_id` の発行と伝播 | 1 Request のログを絞り込めない |
 | ヘッダからの `request_id` 継承 | サービスをまたいだ追跡ができない |
-| Response ヘッダへの `request_id` | 問い合わせ時に該当リクエストを特定できない |
+| Response ヘッダへの `request_id` | 問い合わせ時に該当 Request を特定できない |
 | `statusRecorder` | 書いた Status を後から読めない |
 | `LogFields`（ポインタ経由の書き戻し） | 内側 middleware の情報が外側に届かない |
 | Status に応じたログレベル | エラーが INFO に埋もれる |
 | 出力項目の明示的な列挙 | Cookie やパスワードの漏洩 |
 | `task_history` の Transaction 内記録 | 更新されたのに履歴がない状態 |
-
-| 得られた検証データ | 値 |
-|---|---|
-| アクセスログ | 1 Request = 1 行の JSON |
-| `user_id` | 認証済みリクエストにのみ出力 |
-| `request_id` の継承 | `my-trace-123` がそのまま使われた |
-| 機密情報の検索結果 | `kanban_session` / `password` / `set-cookie` すべて **0 件** |
 
 次は [Chapter 09: Test と Refactoring](./chapter09_test.md)。ここまでの挙動をテストで固定し、責務の整理を仕上げる。

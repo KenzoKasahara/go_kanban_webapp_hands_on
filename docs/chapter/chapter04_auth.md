@@ -2,11 +2,11 @@
 
 ## この章の目的
 
-現時点の API は、**誰でも全ての Task を読み書きできる**。これを3段階で塞ぐ。
+現時点の API は、誰でも全ての Task を読み書きできる。これを3段階で塞ぐ。
 
-1. **Authentication（認証）** — 「あなたは誰か」を識別する
-2. **Authorization（認可）** — 「その人はこの操作をしてよいか」を判断する
-3. **IDOR / BOLA 対策** — ID を書き換えても他人の資源へ到達できないようにする
+1. Authentication（認証）で「あなたは誰か」を識別する
+2. Authorization（認可）で「その人はこの操作をしてよいか」を判断する
+3. IDOR / BOLA 対策で、ID を書き換えても他人の資源へ届かないようにする
 
 この3つは混同されやすいが別物で、対策する場所も違う。
 
@@ -396,15 +396,19 @@ sequenceDiagram
 > **WARNING**
 > 認証処理・パスワードハッシュ・乱数生成を独自方式で作らない。既存の検証された実装を使う。
 
-| 実装上の判断 | 理由 |
+パスワードのハッシュには `bcrypt` を使う。bcrypt は意図的に遅く作られたハッシュ関数で、総当たり攻撃のコストを上げられる。SHA-256 のような高速なハッシュは、攻撃者にとっても速く計算できるので向かない。
+
+Session ID の生成には `crypto/rand` を使う。`math/rand` は擬似乱数で、種が分かれば次の値を予測できてしまう。
+
+ユーザー未登録とパスワード不一致は、どちらも同じ 401 で返す。レスポンスを分けると、その違いから登録済みのメールアドレスを列挙できるからだ。Session をサーバ側に持つのは、ログアウト時にサーバ側から即座に無効化するため。
+
+Cookie には次の属性を付けている。
+
+| 属性 | 効果 |
 |---|---|
-| `bcrypt` を使う | **意図的に遅い**ハッシュ関数。総当たり攻撃のコストを上げる。SHA-256 などの高速ハッシュは不適 |
-| `crypto/rand` を使う | `math/rand` は擬似乱数で、種から次の値を予測できる。Session ID には使えない |
-| 未登録とパスワード不一致を**両方 401** にする | 区別すると、レスポンスの違いから登録済みメールアドレスを列挙できる |
 | `HttpOnly` | JavaScript から Cookie を読めなくする。XSS があっても Session を盗まれにくくする |
 | `SameSite=Lax` | 他サイトからの遷移で Cookie が自動送信されるのを抑える。CSRF 対策の一部 |
-| `Secure` は本番で `true` | HTTPS でのみ Cookie を送る。ローカルは HTTP なので `false` |
-| Session を**サーバ側**に持つ | Logout でサーバ側から即座に無効化できる |
+| `Secure` | HTTPS でのみ Cookie を送る。ローカルは HTTP なので `false`、本番では `true` にする |
 
 <details>
 <summary>DECISION: なぜ JWT ではなく Session なのか</summary>
@@ -462,6 +466,21 @@ const (
 // canWriteTask は Task を作成・更新できる Role かどうかを判断する。
 func canWriteTask(role string) bool {
 	return role == RoleOwner || role == RoleMember
+}
+
+// canManageMembers は Member を追加できる Role かどうかを判断する。
+func canManageMembers(role string) bool {
+	return role == RoleOwner
+}
+
+// isValidRole は外部から受け取った role 文字列が定義済みの値かを判断する。
+func isValidRole(role string) bool {
+	switch role {
+	case RoleOwner, RoleMember, RoleViewer:
+		return true
+	default:
+		return false
+	}
 }
 
 // projectRole は user が project のメンバーかどうかと、その Role を返す。
@@ -540,7 +559,7 @@ GET /tasks/100     ← 自分の Task。正常に見える
 GET /tasks/101     ← User B の Task が見える？
 ```
 
-**認証は通っている**ことに注意する。ログインしているので 401 にはならない。足りないのは「この Task はこの User のものか」という**オブジェクト単位の認可**。
+認証は通っていることに注意する。ログインしているので 401 にはならない。足りないのは「この Task はこの User のものか」を確かめる、オブジェクト単位の認可だ。
 
 ### 危険な実装
 
@@ -563,7 +582,7 @@ if err != nil {
 }
 ```
 
-動きはするが、**Handler が増えるたびに同じ確認を書く必要がある**。1か所でも書き忘れれば、そこが穴になる。
+動きはするが、Handler が増えるたびに同じ確認を書く必要がある。1か所でも書き忘れれば、そこが穴になる。
 
 ### 採用した実装
 
@@ -574,10 +593,10 @@ JOIN project_members pm ON pm.project_id = t.project_id
 WHERE t.id = $1 AND pm.user_id = $2;
 ```
 
-**取得と認可を1つのクエリにまとめる。** メンバーでなければ「0 件」になり、そもそも Task を手に入れられない。書き忘れようがない。
+取得と認可を1つのクエリにまとめる。メンバーでなければ結果が 0 件になり、そもそも Task を手に入れられない。確認を書き忘れる余地がない。
 
 > **POINT**
-> 「資源が存在するか」ではなく、「**現在の User から見て、その資源へアクセス可能か**」を問う。
+> 「資源が存在するか」ではなく、「現在の User から見て、その資源へアクセス可能か」を問う。
 > この違いが IDOR 対策の核心になる。
 
 ### 403 ではなく 404 を返す理由
@@ -592,7 +611,7 @@ WHERE t.id = $1 AND pm.user_id = $2;
    → 存在自体を漏らさない
 ```
 
-これを **Resource Enumeration（資源の列挙）** の防止という。ただし、社内ツールなど「誰が見ても存在は分かってよい」要件なら 403 のほうが親切な場合もある。**要件次第で決める判断項目**として扱う。
+これを Resource Enumeration（資源の列挙）の防止という。ただし、社内ツールなど「誰が見ても存在は分かってよい」要件なら 403 のほうが親切な場合もある。どちらを返すかは要件次第で決める。
 
 ---
 
@@ -602,9 +621,20 @@ WHERE t.id = $1 AND pm.user_id = $2;
 
 各 Handler の先頭で認証済みユーザーを取り出し、認可を確認する。
 
+この Step の変更はすべて `cmd/api/main.go` に対して行う。既存の Handler は置き換え、Member 追加の Handler は新しく足す。
+
+| 対象 | 操作 |
+|---|---|
+| `createTaskHandler` | 先頭に認証・認可を追加 |
+| `getTaskHandler` | 丸ごと置き換え |
+| `listTasksHandler` | 先頭に認証・認可を追加 |
+| `createProjectHandler` | 丸ごと置き換え |
+| `addMemberHandler` | 新規追加 |
+| `main()` のルーティング | `mux` の定義を置き換え |
+
 ### 実行
 
-Task 作成の Handler。
+`createTaskHandler` の先頭に、認証と認可の確認を追加する。
 
 ```go
 func createTaskHandler(w http.ResponseWriter, r *http.Request) {
@@ -636,7 +666,7 @@ func createTaskHandler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Task 取得の Handler。IDOR 対策済みのクエリに置き換える。
+`getTaskHandler` を丸ごと置き換える。取得には IDOR 対策済みの `findTaskForUser` を使う。
 
 ```go
 func getTaskHandler(w http.ResponseWriter, r *http.Request) {
@@ -662,9 +692,51 @@ func getTaskHandler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Project 作成では、作成者を Owner として登録する。
+`listTasksHandler` の先頭にも認証と認可の確認を追加する。一覧は閲覧なので、メンバーであれば Viewer でもよい。`projectRole` はメンバーでなければ `ErrForbidden` を返すため、Role の値そのものは使わない。
 
 ```go
+func listTasksHandler(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		respondError(w, ErrUnauthorized)
+		return
+	}
+
+	projectID, err := pathID(r, "id")
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+
+	// メンバーかどうかだけを確認する。Viewer でも一覧は読める。
+	if _, err := projectRole(r.Context(), projectID, user.ID); err != nil {
+		respondError(w, err)
+		return
+	}
+
+	// ... 以降は Chapter 03 と同じ（SELECT → JSON）
+}
+```
+
+`createProjectHandler` を丸ごと置き換える。Project を作ると同時に、作成者を Owner として `project_members` へ登録する。
+
+```go
+func createProjectHandler(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		respondError(w, ErrUnauthorized)
+		return
+	}
+
+	var input struct {
+		Name string `json:"name"`
+	}
+
+	if err := decodeJSON(r, &input); err != nil {
+		respondError(w, err)
+		return
+	}
+
 	// Project作成とOwner登録は「両方成功」か「両方失敗」でなければならない。
 	// Projectだけ作られてMemberが居ないと、作成者本人すら操作できないProjectが残る。
 	// Transactionの詳細は Chapter 06 で扱う。
@@ -701,9 +773,82 @@ Project 作成では、作成者を Owner として登録する。
 		respondError(w, fmt.Errorf("commit: %w", err))
 		return
 	}
+
+	writeJSON(w, http.StatusCreated, project)
+}
 ```
 
-ルーティングで認証の要否を分ける。
+`addMemberHandler` を新しく追加する。Role の設計どおり、Member を追加できるのは Owner だけにする。
+
+```go
+func addMemberHandler(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		respondError(w, ErrUnauthorized)
+		return
+	}
+
+	projectID, err := pathID(r, "id")
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+
+	role, err := projectRole(r.Context(), projectID, user.ID)
+	if err != nil {
+		respondError(w, err)
+		return
+	}
+
+	if !canManageMembers(role) {
+		respondError(w, ErrForbidden)
+		return
+	}
+
+	var input struct {
+		UserID int64  `json:"user_id"`
+		Role   string `json:"role"`
+	}
+
+	if err := decodeJSON(r, &input); err != nil {
+		respondError(w, err)
+		return
+	}
+
+	// DB の CHECK 制約でも弾けるが、その場合は 500 になる。先に 400 として返す。
+	if !isValidRole(input.Role) {
+		respondError(w, &ValidationError{Message: "role must be one of owner, member, viewer"})
+		return
+	}
+
+	_, err = pool.Exec(
+		r.Context(),
+		"INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, $3)",
+		projectID, input.UserID, input.Role,
+	)
+
+	// 複合主キー (project_id, user_id) の違反 = すでにメンバー。
+	if isUniqueViolation(err) {
+		respondError(w, publicError(ErrConflict, "user is already a member"))
+		return
+	}
+
+	// users への外部キー違反 = 存在しない User。
+	if isForeignKeyViolation(err) {
+		respondError(w, publicError(ErrNotFound, "user not found"))
+		return
+	}
+
+	if err != nil {
+		respondError(w, fmt.Errorf("insert project member: %w", err))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+```
+
+最後に `main()` のルーティングを置き換え、認証の要否を分ける。
 
 ```go
 	mux := http.NewServeMux()
@@ -722,8 +867,7 @@ Project 作成では、作成者を Owner として登録する。
 	mux.HandleFunc("GET /tasks/{id}", requireAuth(getTaskHandler))
 ```
 
-> **POINT**
-> 認証の要否がルーティング定義を見るだけで分かる。Handler の中に `if cookie == nil` が散らばっていると、どの API が保護されているのか一覧できない。
+こうしておくと、認証の要否がルーティング定義を見るだけで分かる。Handler の中に `if cookie == nil` が散らばっていると、どの API が保護されているのか一覧できない。
 
 ---
 
@@ -735,72 +879,320 @@ Project 作成では、作成者を Owner として登録する。
 
 ### 実行
 
+`go-kanban` ディレクトリでサーバを起動する。Chapter 03 のサーバが動いたままなら、先に `Ctrl + C` で止める。止めないと変更前のコードが応答し続け、新しいサーバはポート 8080 を使えずに起動に失敗する。
+
 ```bash
-# ユーザー登録
-curl -X POST localhost:8080/users -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"alice-password-1"}'
-curl -X POST localhost:8080/users -H 'Content-Type: application/json' \
-  -d '{"email":"bob@example.com","password":"bob-password-123"}'
-
-# ログイン（Cookie をファイルへ保存）
-curl -c alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"alice-password-1"}'
-curl -c bob.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
-  -d '{"email":"bob@example.com","password":"bob-password-123"}'
-
-# alice が Project と Task を作る
-curl -b alice.txt -X POST localhost:8080/projects -H 'Content-Type: application/json' \
-  -d '{"name":"Alice Board"}'
-curl -b alice.txt -X POST localhost:8080/projects/1/tasks -H 'Content-Type: application/json' \
-  -d '{"title":"secret task","priority":"high"}'
-
-# bob が alice の Task を読もうとする
-curl -i -b bob.txt localhost:8080/tasks/1
+go vet ./...
+go run ./cmd/api
 ```
 
-`-c` は Cookie の保存、`-b` は Cookie の送信を指定する。
+サーバはこのターミナルを占有するので、以降の curl は別のターミナルで実行する。
+
+コマンド横の `#1` などは、後の期待結果の表の番号に対応する。
+
+```bash
+# ユーザー登録
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'    #1
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+  -d '{"email":"bob@example.com","password":"bob-password-123"}'
+
+# 登録の失敗パターン
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'    #2 同じメールで再登録
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+  -d '{"email":"carol@example.com","password":"short"}'               #3 12文字未満
+
+# Cookie なしで Project を作ろうとする
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects -H 'Content-Type: application/json' \
+  -d '{"name":"No Cookie"}'                                           #4
+
+# ログインの失敗パターン
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"wrong-password-1"}'    #5 誤ったパスワード
+curl -s -w '\n%{http_code}\n' -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"nobody@example.com","password":"alice-password-1"}'   #6 存在しないメール
+
+# ログイン（Cookie をファイルへ保存）
+# curl は保存先のディレクトリを作らないので、先に作っておく
+mkdir -p cookie
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'    #7
+curl -s -w '\n%{http_code}\n' -c ./cookie/bob.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"bob@example.com","password":"bob-password-123"}'
+
+# alice が Project を作り、レスポンスの id を控える
+PROJECT=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8080/projects \
+  -H 'Content-Type: application/json' -d '{"name":"Alice Board"}')
+echo "$PROJECT"
+PROJECT_ID=$(echo "$PROJECT" | head -n 1 | sed -E 's/^\{"id":([0-9]+).*/\1/')
+
+# alice がその Project に Task を作り、レスポンスの id を控える
+TASK=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+  -H 'Content-Type: application/json' -d '{"title":"secret task","priority":"high"}')
+echo "$TASK"                                                          #8
+TASK_ID=$(echo "$TASK" | head -n 1 | sed -E 's/^\{"id":([0-9]+).*/\1/')
+
+# alice が自分の Task を読む
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID     #9
+
+# bob が alice の Task を読もうとする（IDOR）
+curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8080/tasks/$TASK_ID       #10
+
+# bob が alice の Project を操作しようとする
+curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+  -H 'Content-Type: application/json' -d '{"title":"intruder","priority":"low"}'  #11
+curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8080/projects/$PROJECT_ID/tasks  #12
+```
+
+| オプション | 意味 |
+|---|---|
+| `-s` | 進捗表示を消す。変数へ入れるときに余計な出力が混ざらない |
+| `-w '\n%{http_code}\n'` | Body の後に改行し、Status Code を出力する |
+| `-c ファイル` | レスポンスの Cookie をファイルへ保存する |
+| `-b ファイル` | ファイルの Cookie を送信する |
+
+Project と Task の ID は固定の値にしない。Chapter 03 までに作ったデータが DB に残っていれば、alice の Project は 1 番にならない。`/projects/1/tasks` と書くと、alice がメンバーではない Project を指してしまい、Task 作成が 403 になる。
+
+変数には Body と Status Code の2行が入る。`head -n 1` で1行目の Body だけを取り出し、`sed` でその先頭の `{"id":数字` から数字を抜き出している。
+
+> **WARNING**
+> `-b ./cookie/alice.txt` は、カレントディレクトリにある `./cookie/alice.txt` を読む。ファイルが見つからなくても curl はエラーを出さず、Session Cookie を送らないまま Request する。その結果、ログインに成功していても 401 が返る。ログインと同じディレクトリで実行する。
+
+`PROJECT_ID` と `TASK_ID` はシェルの変数なので、ターミナルを閉じると消える。この Step の curl は、最後まで同じターミナルで実行する。
 
 ### 期待結果
 
-検証環境での実際の出力。
+検証環境での実際の出力。空の DB から始めたため、ID はすべて 1 になっている。既存データがある環境では、`id` と `project_id` の値が変わる。
 
 | # | 操作 | Status | Response |
 |---|---|---|---|
-| 1 | alice 登録 | **201** | `{"id":1,"email":"alice@example.com"}` |
-| 2 | 同じメールで再登録 | **409** | `{"error":{"code":"conflict","message":"email is already registered"}}` |
-| 3 | 12文字未満のパスワード | **400** | `{"error":{"code":"invalid_request","message":"password must be 12 characters or more"}}` |
-| 4 | Cookie なしで `POST /projects` | **401** | `{"error":{"code":"unauthorized","message":"authentication required"}}` |
-| 5 | 誤ったパスワードでログイン | **401** | `{"error":{"code":"unauthorized","message":"authentication required"}}` |
-| 6 | 存在しないメールでログイン | **401** | `{"error":{"code":"unauthorized","message":"authentication required"}}` |
-| 7 | alice がログイン | **200** | `Set-Cookie: kanban_session=zeOtAK94...; Path=/; HttpOnly; SameSite=Lax` |
+| 1 | alice 登録 | 201 | `{"id":1,"email":"alice@example.com"}` |
+| 2 | 同じメールで再登録 | 409 | `{"error":{"code":"conflict","message":"email is already registered"}}` |
+| 3 | 12文字未満のパスワード | 400 | `{"error":{"code":"invalid_request","message":"password must be 12 characters or more"}}` |
+| 4 | Cookie なしで `POST /projects` | 401 | `{"error":{"code":"unauthorized","message":"authentication required"}}` |
+| 5 | 誤ったパスワードでログイン | 401 | `{"error":{"code":"unauthorized","message":"authentication required"}}` |
+| 6 | 存在しないメールでログイン | 401 | `{"error":{"code":"unauthorized","message":"authentication required"}}` |
+| 7 | alice がログイン | 200 | `{"user_id":1}`（Cookie は `./cookie/alice.txt` に保存される） |
+| 8 | alice が Task 作成 | 201 | `{"id":1,"project_id":1,"title":"secret task",...}` |
+| 9 | alice が自分の Task 取得 | 200 | `{"id":1,...,"title":"secret task",...}` |
+| 10 | **bob が alice の Task 取得（IDOR）** | **404** | `{"error":{"code":"not_found","message":"resource not found"}}` |
+| 11 | bob が alice の Project に Task 作成 | 403 | `{"error":{"code":"forbidden","message":"operation not allowed"}}` |
+| 12 | bob が alice の Project の Task 一覧 | 403 | `{"error":{"code":"forbidden","message":"operation not allowed"}}` |
 
 > **NOTE**
 > ログインは現時点では 200 と `{"user_id":1}` を返す。Chapter 05 で層を分割する際、Body に意味のある情報がないため 204 No Content へ変更する。
-| 8 | alice が Task 作成 | **201** | `{"id":1,"project_id":1,"title":"secret task",...}` |
-| 9 | **alice が自分の Task 取得** | **200** | `{"id":1,...,"title":"secret task",...}` |
-| 10 | **bob が alice の Task 取得（IDOR）** | **404** | `{"error":{"code":"not_found","message":"resource not found"}}` |
-| 11 | bob が alice の Project に Task 作成 | **403** | `{"error":{"code":"forbidden","message":"operation not allowed"}}` |
-| 12 | bob が alice の Project の Task 一覧 | **403** | `{"error":{"code":"forbidden","message":"operation not allowed"}}` |
+
+保存された Cookie は `cat ./cookie/alice.txt` で確認できる。`#HttpOnly_localhost` で始まる行の最後の列が Session ID になる。
 
 > **CHECK**
-> 5 と 6 が**同じレスポンス**である点を確認する。ここが違うと、メールアドレスの登録有無を外部から調べられる。
+> 5 と 6 が同じレスポンスである点を確認する。ここが違うと、メールアドレスの登録有無を外部から調べられる。
 
-### Failure Test: ログアウト後に Cookie を使い回す
+### ログアウト後に Cookie を使い回す（Failure Test）
 
 ```bash
-curl -b alice.txt -X POST localhost:8080/logout      # → 204
-curl -b alice.txt localhost:8080/tasks/1              # → 401
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8080/logout     # → 204
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID    # → 401
 ```
 
-実際の出力。
+実際の出力。ログアウトは Body が空なので、1行目は空行になる。JSON の Body と Status Code の間にも空行が入る。サーバの `json.Encoder` が Body の末尾に改行を付け、さらに `-w` の `\n` が続くためである。
 
 ```text
-logout: 204
-after logout GET /tasks/1: 401
+
+204
 {"error":{"code":"unauthorized","message":"authentication required"}}
+
+401
 ```
 
-サーバ側の `sessions` 行を削除しているため、同じ Cookie を送っても通らない。**これが Session 方式の利点**で、JWT では追加の仕組みなしには実現できない。
+サーバ側の `sessions` 行を削除しているため、同じ Cookie を送っても通らない。これが Session 方式の利点で、JWT では追加の仕組みなしには実現できない。
+
+### まとめて確認する
+
+期待結果の #1〜#12 と Failure Test を、スクリプトで一度に確認できるようにしておく。
+
+`scripts/chapter04_check.sh` を新規作成する。
+
+> **WARNING**
+> Windows では、エディタが改行コードを CRLF にして保存することがある。CRLF のままだと、bash が `$'\r': command not found` などのエラーで止まる。VS Code なら、右下のステータスバーで `CRLF` を `LF` に切り替えてから保存する。
+
+```bash
+#!/usr/bin/env bash
+# Chapter 04 Step 6 の「期待結果」を順に実行し、Status Code を照合する。
+#
+# 使い方（go-kanban ディレクトリで、サーバを起動した状態で実行する）:
+#   bash scripts/chapter04_check.sh
+#
+# 何度でも実行できるよう、メールアドレスには実行ごとに異なる接尾辞を付ける。
+# そのため Response の id はドキュメントの表と一致しない。照合するのは Status Code だけ。
+
+set -u
+
+BASE_URL=${BASE_URL:-http://localhost:8080}
+SUFFIX=$(date +%s)
+ALICE="alice-$SUFFIX@example.com"
+BOB="bob-$SUFFIX@example.com"
+
+# Cookie ファイルは一時ディレクトリに置き、終了時に消す。
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+ALICE_COOKIE="$WORK_DIR/cookie/alice.txt"
+BOB_COOKIE="$WORK_DIR/cookie/bob.txt"
+mkdir -p "$WORK_DIR/cookie"
+
+PASSED=0
+FAILED=0
+
+# call METHOD PATH DATA [curlの追加オプション...]
+# 結果を STATUS と BODY に入れる。DATA が空なら Body を送らない。
+call() {
+	local method=$1 path=$2 data=$3
+	shift 3
+
+	local out
+	if [ -n "$data" ]; then
+		out=$(curl -s -w '\n%{http_code}' -X "$method" "$@" \
+			-H 'Content-Type: application/json' -d "$data" "$BASE_URL$path")
+	else
+		out=$(curl -s -w '\n%{http_code}' -X "$method" "$@" "$BASE_URL$path")
+	fi
+
+	STATUS=${out##*$'\n'}
+	BODY=${out%$'\n'*}
+}
+
+# check 番号 操作 期待するStatus
+check() {
+	local no=$1 name=$2 want=$3
+
+	if [ "$STATUS" = "$want" ]; then
+		PASSED=$((PASSED + 1))
+		printf 'PASS  #%-3s %s (%s)\n' "$no" "$name" "$STATUS"
+	else
+		FAILED=$((FAILED + 1))
+		printf 'FAIL  #%-3s %s (want %s, got %s)\n' "$no" "$name" "$want" "$STATUS"
+		printf '      body: %s\n' "$BODY"
+	fi
+}
+
+# 後続の手順に必要な準備。失敗したら以降は意味がないので中断する。
+require() {
+	local name=$1 want=$2
+
+	if [ "$STATUS" != "$want" ]; then
+		printf 'ABORT %s (want %s, got %s)\n' "$name" "$want" "$STATUS"
+		printf '      body: %s\n' "$BODY"
+		exit 1
+	fi
+}
+
+extract_id() {
+	echo "$1" | sed -E 's/^\{"id":([0-9]+).*/\1/'
+}
+
+call GET /health ""
+if [ "$STATUS" != "200" ]; then
+	echo "サーバに接続できません: $BASE_URL (status: $STATUS)"
+	echo "go-kanban ディレクトリで go run ./cmd/api を実行してから、もう一度試してください。"
+	exit 1
+fi
+
+echo "== ユーザー登録"
+call POST /users "{\"email\":\"$ALICE\",\"password\":\"alice-password-1\"}"
+check 1 "alice 登録" 201
+
+call POST /users "{\"email\":\"$BOB\",\"password\":\"bob-password-123\"}"
+require "bob 登録" 201
+
+call POST /users "{\"email\":\"$ALICE\",\"password\":\"alice-password-1\"}"
+check 2 "同じメールで再登録" 409
+
+call POST /users "{\"email\":\"carol-$SUFFIX@example.com\",\"password\":\"short\"}"
+check 3 "12文字未満のパスワード" 400
+
+echo "== 認証"
+call POST /projects '{"name":"No Cookie"}'
+check 4 "Cookie なしで POST /projects" 401
+
+call POST /login "{\"email\":\"$ALICE\",\"password\":\"wrong-password-1\"}"
+check 5 "誤ったパスワードでログイン" 401
+WRONG_PASSWORD_BODY=$BODY
+
+call POST /login "{\"email\":\"nobody-$SUFFIX@example.com\",\"password\":\"alice-password-1\"}"
+check 6 "存在しないメールでログイン" 401
+UNKNOWN_EMAIL_BODY=$BODY
+
+# CHECK: 5 と 6 が同じレスポンスであること。
+if [ "$WRONG_PASSWORD_BODY" = "$UNKNOWN_EMAIL_BODY" ]; then
+	PASSED=$((PASSED + 1))
+	echo "PASS  5 と 6 のレスポンスが同じ"
+else
+	FAILED=$((FAILED + 1))
+	echo "FAIL  5 と 6 のレスポンスが異なる"
+	printf '      5: %s\n      6: %s\n' "$WRONG_PASSWORD_BODY" "$UNKNOWN_EMAIL_BODY"
+fi
+
+call POST /login "{\"email\":\"$ALICE\",\"password\":\"alice-password-1\"}" -c "$ALICE_COOKIE"
+check 7 "alice がログイン" 200
+
+call POST /login "{\"email\":\"$BOB\",\"password\":\"bob-password-123\"}" -c "$BOB_COOKIE"
+require "bob がログイン" 200
+
+echo "== 認可・IDOR"
+call POST /projects '{"name":"Alice Board"}' -b "$ALICE_COOKIE"
+require "alice が Project 作成" 201
+PROJECT_ID=$(extract_id "$BODY")
+
+call POST "/projects/$PROJECT_ID/tasks" '{"title":"secret task","priority":"high"}' -b "$ALICE_COOKIE"
+check 8 "alice が Task 作成" 201
+TASK_ID=$(extract_id "$BODY")
+
+if ! [[ "$TASK_ID" =~ ^[0-9]+$ ]]; then
+	echo "ABORT Task の id を取り出せませんでした: $BODY"
+	exit 1
+fi
+
+call GET "/tasks/$TASK_ID" "" -b "$ALICE_COOKIE"
+check 9 "alice が自分の Task 取得" 200
+
+call GET "/tasks/$TASK_ID" "" -b "$BOB_COOKIE"
+check 10 "bob が alice の Task 取得（IDOR）" 404
+
+call POST "/projects/$PROJECT_ID/tasks" '{"title":"intruder","priority":"low"}' -b "$BOB_COOKIE"
+check 11 "bob が alice の Project に Task 作成" 403
+
+call GET "/projects/$PROJECT_ID/tasks" "" -b "$BOB_COOKIE"
+check 12 "bob が alice の Project の Task 一覧" 403
+
+echo "== Failure Test: ログアウト後に Cookie を使い回す"
+call POST /logout "" -b "$ALICE_COOKIE"
+check F1 "ログアウト" 204
+
+call GET "/tasks/$TASK_ID" "" -b "$ALICE_COOKIE"
+check F2 "ログアウト後の Task 取得" 401
+
+echo
+echo "passed: $PASSED, failed: $FAILED"
+
+[ "$FAILED" -eq 0 ]
+```
+
+サーバを起動した状態で、`go-kanban` ディレクトリから実行する。
+
+```bash
+bash scripts/chapter04_check.sh
+```
+
+各項目の Status Code を期待値と照合し、`PASS` / `FAIL` を出力する。5 と 6 のレスポンスが同じかどうかも確認する。すべて通れば最後に `failed: 0` と表示される。
+
+| 手動の手順との違い | 理由 |
+|---|---|
+| メールアドレスに実行時刻の接尾辞を付ける | 同じメールだと2回目以降の登録が 409 になり、何度も実行できない |
+| Response の中身は照合しない | ID が実行ごとに変わるため。確認するのは Status Code だけ |
+| Cookie は一時ディレクトリに保存し、終了時に消す | 手動で作った `./cookie/alice.txt` / `./cookie/bob.txt` を上書きしない |
+
+> **NOTE**
+> `FAIL` が出た項目には、実際に返ってきた Body も表示される。サーバのポートを変えている場合は `BASE_URL=http://localhost:9090 bash scripts/chapter04_check.sh` のように指定する。
 
 ---
 
@@ -826,11 +1218,9 @@ sequenceDiagram
     H-->>B: 404 not_found
 ```
 
-**認証と認可が別の段階で働いている**ことが分かる。bob が誰かは確定しているが、その bob に権限がないので 404 になる。
-
 ---
 
-## この章のまとめ
+## この章で塞いだ穴
 
 | 導入したもの | 防いだ問題 |
 |---|---|
@@ -841,7 +1231,7 @@ sequenceDiagram
 | サーバ側 Session の削除 | ログアウトしても Session が生き続ける |
 | `requireAuth` でのルーティング分離 | 認証チェックの書き忘れ |
 | `projectRole()` による Role 確認 | 権限のない操作 |
-| **取得と認可を1クエリに統合** | **IDOR / BOLA** |
+| 取得と認可を1クエリに統合 | IDOR / BOLA |
 | 他人の資源に 404 | 資源の存在の漏洩 |
 
 <details>

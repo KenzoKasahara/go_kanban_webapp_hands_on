@@ -2,7 +2,7 @@
 
 ## この章の目的
 
-PostgreSQL を起動し、Task を作成・取得できる API を作る。ただし**意図的に雑に作る**。
+PostgreSQL を起動し、Task を作成・取得できる API を作る。ただし意図的に雑に作る。
 
 Validation は最小限、認証なし、Handler から直接 SQL を呼ぶ。そのうえで「この実装の何が問題なのか」を実際のレスポンスとして観測する。ここで観測した問題が、Chapter 03 以降の改善対象になる。
 
@@ -15,8 +15,8 @@ Validation は最小限、認証なし、Handler から直接 SQL を呼ぶ。�
 - [ ] `docker compose up -d` で PostgreSQL が起動する
 - [ ] Migration でテーブルが作られる
 - [ ] `POST /projects/1/tasks` で Task を作成できる
-- [ ] **空の title が 201 で保存されてしまうこと**を確認した
-- [ ] **存在しない Task の取得が 500 になること**を確認した
+- [ ] 空の title が 201 で保存されてしまうことを確認した
+- [ ] 存在しない Task の取得が 500 になることを確認した
 
 ## この章の構造
 
@@ -65,9 +65,11 @@ volumes:
 ```
 
 ```bash
-docker compose up -d
+docker compose up -d --wait
 docker compose ps
 ```
+
+`--wait` を付けると、`healthcheck` が通って `healthy` になるまでコマンドが戻らない。
 
 ### 期待結果
 
@@ -83,7 +85,7 @@ go-kanban-db-1   Up 55 seconds (healthy)
 
 ### なぜ行うのか
 
-`healthcheck` を入れておくと、「起動したがまだ接続を受け付けていない」状態を区別できる。これがないと、次の Migration が接続エラーで落ちることがある。
+`healthcheck` を入れておくと、「起動したがまだ接続を受け付けていない」状態を区別できる。`--wait` なしの `docker compose up -d` はコンテナを起動した時点で戻るので、すぐ次の Migration を流すと接続エラーで落ちることがある。
 
 ---
 
@@ -160,7 +162,7 @@ CREATE INDEX
 | `version INTEGER NOT NULL DEFAULT 1` | Chapter 06 の楽観ロックで使う。後から列を足すと既存行の扱いに困るので最初から入れる |
 | `description` は `NOT NULL DEFAULT ''` | NULL と空文字の両方が存在する状態を避ける。判定が1つ減る |
 | `idx_tasks_project_id` | `WHERE project_id = $1` が頻出するため |
-| `TIMESTAMPTZ` | タイムゾーン情報を保持する。`TIMESTAMP` だとサーバ設定に依存する |
+| `TIMESTAMPTZ` | UTC に正規化して保存し、表示時にセッションのタイムゾーンへ変換する。`TIMESTAMP` はタイムゾーンを持たないので、どの時刻を指すかが曖昧になる |
 
 </details>
 
@@ -196,7 +198,7 @@ PostgreSQL Protocol
 PostgreSQL
 ```
 
-`pgxpool` は接続プール付きの API を提供する。Request ごとに新しい接続を張ると、接続確立のコストと DB 側の接続数上限がすぐ問題になる。プールは接続を使い回す。
+`pgxpool` は接続プール付きの API を提供する。リクエストごとに新しい接続を張ると、接続確立のコストと DB 側の接続数上限がすぐ問題になる。プールは接続を使い回す。
 
 ---
 
@@ -446,12 +448,12 @@ go run ./cmd/api
 | 認証も認可もない | Session と Role で制御する | Chapter 04 |
 | `pool` がグローバル変数 | 依存として注入する | Chapter 05 |
 
-**後で「なぜ改善が必要なのか」を比較するために、先に問題のある状態を作って動かす。**
+後で「なぜ改善が必要なのか」を比較するために、先に問題のある状態を作って動かす。
 
 <details>
 <summary>GO NOTE: <code>$1</code> と <code>PathValue</code></summary>
 
-`$1`, `$2` は PostgreSQL のプレースホルダ。値を SQL 文と**別物として**サーバへ渡す。文字列連結で SQL を組み立てるとどうなるかは Chapter 05 で実演する。
+`$1`, `$2` は PostgreSQL のプレースホルダ。値を SQL 文と別物としてサーバへ渡す。文字列連結で SQL を組み立てるとどうなるかは Chapter 05 で実演する。
 
 `r.PathValue("id")` は Go 1.22 以降の機能で、`"POST /projects/{id}/tasks"` の `{id}` 部分を取り出す。戻り値は常に文字列なので、`strconv.ParseInt` で数値へ変換する。
 
@@ -464,17 +466,17 @@ go run ./cmd/api
 
 #### 結論
 
-`Decode` は、受け取った変数に JSON の値を**書き込む**関数である。書き込む先を教えるために、`input` の場所（アドレス）を `&input` で渡す。
+`Decode` は、受け取った変数に JSON の値を書き込む関数である。書き込む先を教えるために、`input` の場所（アドレス）を `&input` で渡す。
 
-![Go で Decode(&input) や Scan(&task.ID) に & が付く理由](../images//chapter02_crud/Goのアドレス・ポインタを使用する理由.png)
+![Go で Decode(&input) や Scan(&task.ID) に & が付く理由](../images/chapter02_crud/Goのアドレス・ポインタを使用する理由.png)
 
-#### `&` なしの場合：コピーに書き込まれて捨てられる
+#### `&` なしだとコピーに書き込まれて捨てられる
 
 Go は関数に値を渡すときにコピーを作る。`Decode(input)` と書くと、`Decode` が受け取るのは `input` の複製になる。仮に書き込めても複製のほうに入り、関数が終わると捨てられる。
 
 実際には、`Decode` は書き込み先がないと判断してエラーを返す。
 
-#### `&` ありの場合：本体に書き込まれる
+#### `&` ありなら本体に書き込まれる
 
 `&input` で渡すのは `input` の場所だけで、`Decode` はその場所をたどって呼び出し元の `input` に直接書き込む。
 
@@ -483,11 +485,25 @@ Go は関数に値を渡すときにコピーを作る。`Decode(input)` と書�
 `Decode` に `input` と `&input` をそれぞれ渡すと、次の結果になる。
 
 ```go
-err := json.NewDecoder(strings.NewReader(`{"name":"買い物"}`)).Decode(input)
-fmt.Printf("& なし: err=%v, input.Name=%q\n", err, input.Name)
+package main
 
-err = json.NewDecoder(strings.NewReader(`{"name":"買い物"}`)).Decode(&input)
-fmt.Printf("& あり: err=%v, input.Name=%q\n", err, input.Name)
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+func main() {
+	var input struct {
+		Name string `json:"name"`
+	}
+
+	err := json.NewDecoder(strings.NewReader(`{"name":"買い物"}`)).Decode(input)
+	fmt.Printf("& なし: err=%v, input.Name=%q\n", err, input.Name)
+
+	err = json.NewDecoder(strings.NewReader(`{"name":"買い物"}`)).Decode(&input)
+	fmt.Printf("& あり: err=%v, input.Name=%q\n", err, input.Name)
+}
 ```
 
 ```text
@@ -509,7 +525,7 @@ Python の感覚で「渡せば中身を埋めてもらえる」と考えると�
 
 #### `&` を付けるかどうかの判断
 
-「変数には必ず `&` を付ける」わけではない。関数に**書き込んでほしいとき**に付ける。
+「変数には必ず `&` を付ける」わけではない。関数に書き込んでほしいときに付ける。
 
 | 書き方 | `&` | 理由 |
 |---|---|---|
@@ -558,7 +574,7 @@ curl -X POST localhost:8080/projects/1/tasks \
 
 ## Step 6. 壊して観察する（この章の本題）
 
-ここからが重要。**この実装の何が問題なのかを、レスポンスとして目に見える形で確認する。**
+この実装の何が問題なのかを、レスポンスとして目に見える形で確認する。
 
 ### Failure Test 1: 空の title と存在しない priority
 
@@ -575,19 +591,18 @@ HTTP/1.1 201 Created
 ```
 
 ```json
-{"id":3,"project_id":1,"title":"","description":"","priority":"SUPER_HIGH","status":"todo","version":1}
+{"id":2,"project_id":1,"title":"","description":"","priority":"SUPER_HIGH","status":"todo","version":1}
 ```
 
 > **観測された問題**
-> title が空でも、priority が定義外の値でも **201 Created** で保存される。
-> DB に `title TEXT NOT NULL` と書いてあるが、空文字は NULL ではないので制約に引っかからない。
+> title が空でも、priority が定義外の値でも 201 Created で保存される。
+> DB に `title TEXT NOT NULL` と書いてあるので弾かれそうに見えるが、空文字は NULL ではないので制約に引っかからない。
 
-一度保存されると、この不正データは一覧 API にもそのまま出てくる。
+一度保存されると、この不正データは一覧 API（`curl localhost:8080/projects/1/tasks`）にもそのまま出てくる。
 
 ```json
 [{"id":1,...,"title":"write docs",...},
- {"id":2,...,"title":"","priority":"SUPER_HIGH",...},
- {"id":3,...,"title":"","priority":"SUPER_HIGH",...}]
+ {"id":2,...,"title":"","priority":"SUPER_HIGH",...}]
 ```
 
 ### Failure Test 2: 存在しない Task を取得する
@@ -605,8 +620,8 @@ no rows in result set
 ```
 
 > **観測された問題**
-> 「そんな Task はない」は利用者の入力に起因する話であって、サーバの不具合ではない。**404 を返すべきところで 500 を返している。**
-> Client から見ると「サーバが壊れた」と区別がつかず、リトライしても無駄になる。
+> 「そんな Task はない」は利用者の入力に起因する話であって、サーバの不具合ではない。404 を返すべきところで 500 を返している。
+> クライアントから見ると「サーバが壊れた」と区別がつかず、リトライしても無駄になる。
 
 ### Failure Test 3: 存在しない Project に Task を作る
 
@@ -616,15 +631,17 @@ curl -i -X POST localhost:8080/projects/9999/tasks \
   -d '{"title":"orphan","priority":"low"}'
 ```
 
-実際の出力（500 と、外部キー違反の詳細）。
+実際の出力。
 
 ```http
 HTTP/1.1 500 Internal Server Error
+
+ERROR: insert or update on table "tasks" violates foreign key constraint "tasks_project_id_fkey" (SQLSTATE 23503)
 ```
 
 > **観測された問題**
-> `http.Error(w, err.Error(), 500)` は、DB が返したエラーメッセージを**そのまま利用者へ返す**。
-> pgx のエラーには**テーブル名・制約名・SQLSTATE** が含まれる。攻撃者にとってはスキーマ構造の手がかりになる。
+> `http.Error(w, err.Error(), 500)` は、DB が返したエラーメッセージをそのまま利用者へ返す。
+> 本文にテーブル名 `tasks`、制約名 `tasks_project_id_fkey`、SQLSTATE `23503` が出ている。攻撃者にとってはスキーマ構造の手がかりになる。
 
 ### Failure Test 4: JSON のフィールド名を打ち間違える
 
@@ -634,7 +651,7 @@ curl -i -X POST localhost:8080/projects/1/tasks \
   -d '{"titel":"typo","priority":"low"}'
 ```
 
-`titel`（typo）は黙って無視され、title が空の Task が 201 で作られる。利用者には「送ったのに反映されない」としか見えない。
+`json.Decoder` は構造体にない `titel`（typo）を黙って無視するので、title が空の Task が 201 で作られる。利用者には「送ったのに反映されない」としか見えない。
 
 ---
 
@@ -666,15 +683,9 @@ flowchart TD
 | DB の内部情報が漏れる | error を分類せずそのまま返している | Chapter 03 |
 | 誰でも全 Task を読める | 認証・認可がない | Chapter 04 |
 
----
-
-## この章のまとめ
-
-- PostgreSQL に接続し、Task の作成・取得・一覧ができるようになった
-- ただし、**不正入力を受け入れ、エラーを誤った Status で返し、内部情報を漏らす**状態になっている
-- これらは「動いているように見える」ため、テストしないと気づけない
+どれも正常系の curl では「動いているように見える」ので、わざと壊すテストをしないと気づけない。
 
 > **POINT**
-> 正解コードを写して終わりにしない。**一度問題を観測してから改善する**と、その改善が何を防いでいるのかが分かる。
+> 正解コードを写して終わりにしない。一度問題を観測してから改善すると、その改善が何を防いでいるのかが分かる。
 
-次は [Chapter 03: Validation と Error Handling](./chapter03_validation.md) で、ここで見つけた4つの問題を実際に潰す。
+次は [Chapter 03: Validation と Error Handling](./chapter03_validation.md) で、表のうち Chapter 03 が担当する4つの問題を実際に潰す。
