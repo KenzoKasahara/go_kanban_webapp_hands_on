@@ -18,7 +18,9 @@ chapter08/
 │   │   └── idempotency.go
 │   ├── app/app.go                      Middleware の順序を完成させる          ← Chapter 08
 │   └── ...                             その他は Chapter 07 と同じ
-├── migrations/003_history.sql          task_history（06）+ idempotency_keys（07）
+├── migrations/
+│   ├── 003_history.sql                 task_history（Chapter 06）
+│   └── 004_idempotency.sql             idempotency_keys（Chapter 07）
 └── scripts/chapter08_check.sh
 ```
 
@@ -30,7 +32,7 @@ RequestID -> AccessLog -> Timeout -> mux -> RequireAuth -> (Idempotency) -> Hand
 
 ## 動かし方
 
-DB は `go-kanban/` の `docker compose` をそのまま使います。この章で追加する migration はありません。Chapter 07 までの `003_history.sql` を適用済みであれば、そのまま動きます。
+DB は `go-kanban/` の `docker compose` をそのまま使います。この章で追加する migration はありません。Chapter 07 までの `003_history.sql` と `004_idempotency.sql` を適用済みであれば、そのまま動きます。
 
 ```bash
 cd answers/chapter08

@@ -27,7 +27,9 @@ chapter07/
 │   │   ├── task.go                  PATCH /tasks/{id}/status（Chapter 06）
 │   │   └── debug.go                 GET /debug/slow（Timeout の検証用）  ← Chapter 07
 │   └── app/app.go                   Middleware と Notifier の組み立て     ← Chapter 07
-├── migrations/003_history.sql       task_history（06）+ idempotency_keys（07）
+├── migrations/
+│   ├── 003_history.sql              task_history（Chapter 06）
+│   └── 004_idempotency.sql          idempotency_keys                   ← Chapter 07
 └── scripts/chapter07_check.sh
 ```
 
@@ -35,10 +37,10 @@ Chapter 05 の検証用コード（`/debug/unsafe-search`、`/debug/nplus1`、`D
 
 ## 動かし方
 
-DB は `go-kanban/` の `docker compose` をそのまま使います。`003_history.sql` を適用していなければ、`go-kanban/` で次を実行します。Chapter 06 で `task_history` を作成済みでも、`IF NOT EXISTS` を付けているので再実行できます。
+DB は `go-kanban/` の `docker compose` をそのまま使います。`004_idempotency.sql` を適用していなければ、`go-kanban/` で次を実行します。Chapter 06 の `003_history.sql` は適用済みである前提です。
 
 ```bash
-docker compose exec -T db psql -U kanban -d kanban -v ON_ERROR_STOP=1 < ../answers/chapter07/migrations/003_history.sql
+docker compose exec -T db psql -U kanban -d kanban -v ON_ERROR_STOP=1 < ../answers/chapter07/migrations/004_idempotency.sql
 ```
 
 ```bash
@@ -81,4 +83,3 @@ bash scripts/chapter07_check.sh
 | 通知先 | `NOTIFY_URL` が空なら Notifier を作らない | 本文は通知先の設定方法を扱っていない。未設定でも起動できるようにした |
 | 通知の URL と Body | `POST {NOTIFY_URL}/task-status-changed`、`task_id` / `project_id` / `old_status` / `new_status` / `version` | 本文では省略されている部分。架空の通知 API を想定している |
 | `notifier_test.go` | `testConfig` / `discardLogger` / `TestRetrySucceedsAfterTransientFailure` を含む全体 | 本文は抜粋のみ |
-| `003_history.sql` | `IF NOT EXISTS` 付き | Chapter 06 で適用済みの環境でも、そのまま流せるようにした |

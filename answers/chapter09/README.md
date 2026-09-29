@@ -24,7 +24,9 @@ chapter09/
 ├── test/
 │   ├── integration_test.go          Test Server・HTTP Client・DB 検証の補助 ← Chapter 09
 │   └── scenario_test.go             4 つのシナリオ                         ← Chapter 09
-├── migrations/003_history.sql
+├── migrations/
+│   ├── 003_history.sql
+│   └── 004_idempotency.sql
 └── scripts/
     ├── setup_test_db.sh             Integration Test 用 DB の作成          ← Chapter 09
     └── load-test.js                 k6 の負荷テスト                        ← Chapter 09

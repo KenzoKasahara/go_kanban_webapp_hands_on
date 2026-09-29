@@ -691,7 +691,7 @@ Client が発行した一意なキーで、処理済みのリクエストを識�
 
 ### 実行
 
-`migrations/003_history.sql` にテーブルを追加する。
+`migrations/004_idempotency.sql` を作る。
 
 ```sql
 CREATE TABLE idempotency_keys (
@@ -703,6 +703,11 @@ CREATE TABLE idempotency_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (key, user_id, endpoint)
 );
+```
+
+```bash
+docker compose exec -T db \
+  psql -U kanban -d kanban -v ON_ERROR_STOP=1 < migrations/004_idempotency.sql
 ```
 
 主キーが `(key, user_id, endpoint)` の3つである点が重要になる。

@@ -34,5 +34,6 @@ psql_in -d kanban -c "CREATE DATABASE $TEST_DB;"
 psql_in -d "$TEST_DB" < "$MIGRATIONS_DIR/001_init.sql"
 psql_in -d "$TEST_DB" < "$MIGRATIONS_DIR/002_auth.sql"
 psql_in -d "$TEST_DB" < "$ROOT_DIR/migrations/003_history.sql"
+psql_in -d "$TEST_DB" < "$ROOT_DIR/migrations/004_idempotency.sql"
 
 echo "$TEST_DB を作成しました。"
