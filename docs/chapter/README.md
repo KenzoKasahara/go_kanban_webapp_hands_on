@@ -93,6 +93,7 @@ flowchart LR
 | [Chapter 08: Logging と Audit Log](./chapter08_observability.md) | 障害調査できるログを出し、機密情報を出さない | 調査不能、Secret 漏洩、変更者不明 |
 | [Chapter 09: Test と Refactoring](./chapter09_test.md) | Unit / HTTP / Integration / Load Test を使い分け、責務を整理する | 正常系しか確認していない、責務混在 |
 | [Appendix: チェックリスト集](./appendix.md) | コードレビュー観点、セルフチェック、原本との対応表 | — |
+| [Appendix: Go の基本構文](./appendix_go_syntax.md) | 本編のコードに出てくる Go の構文を、理由と落とし穴まで含めて引ける | ポインタ・interface・error の書き方で手が止まる |
 
 ## 技術選定と理由
 

@@ -122,6 +122,8 @@ curl -X POST localhost:8080/projects/1/tasks \
 
 後続の章に出てくる Go の文法を、必要な分だけ確認する。すでに Go を知っている場合は読み飛ばしてよい。
 
+各構文の理由や落とし穴は [Appendix: Go の基本構文](./appendix_go_syntax.md) で詳しく扱う。
+
 <details>
 <summary>package と main</summary>
 
