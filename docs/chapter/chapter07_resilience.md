@@ -42,11 +42,11 @@ flowchart LR
 
 ### Step 1. Request 全体に上限を設ける
 
-### やること
+#### やること
 
 Middleware で Request の Context に期限を設定する。
 
-### 実行
+#### 実行
 
 `internal/middleware/observability.go`。
 
@@ -86,7 +86,7 @@ func Timeout(d time.Duration, next http.Handler) http.Handler {
 	h = middleware.RequestID(h)
 ```
 
-### Context の伝播
+#### Context の伝播
 
 ```text
 Client
@@ -114,11 +114,11 @@ Context を引き回すのは、この連鎖を成立させるため。どこか
 
 ### Step 2. Timeout を実際に発生させる
 
-### やること
+#### やること
 
 DB 側で意図的に遅い処理を実行し、Timeout の挙動を確認する。
 
-### 実行
+#### 実行
 
 検証用のエンドポイントを用意する。`internal/handler/debug.go`。
 
@@ -164,7 +164,7 @@ curl -s -o /dev/null -w 'status=%{http_code} time=%{time_total}s\n' \
   -b alice.txt 'localhost:8080/debug/slow?seconds=1'
 ```
 
-### 期待結果
+#### 期待結果
 
 検証環境での実際の出力。
 
@@ -179,7 +179,7 @@ status=200 time=1.026585s
 ```
 
 | 確認項目 | 結果 |
-|---|---|
+| --- | --- |
 | 打ち切りのタイミング | **2.00 秒**（3秒待たずに終了） |
 | Status | 503 Service Unavailable |
 | 上限内のリクエスト | 1.03 秒で 200 |
@@ -190,7 +190,7 @@ status=200 time=1.026585s
 <summary>Timeout 値をどう決めるか</summary>
 
 | 対象 | 目安 | 根拠 |
-|---|---|---|
+| --- | --- | --- |
 | Request 全体 | 2〜30 秒 | Client（ブラウザ、ロードバランサ）の Timeout より**短く**する |
 | DB クエリ | Request 全体より短く | 遅いクエリを特定しやすくする |
 | 外部 API（1回の試行） | 0.5〜3 秒 | Retry の回数 × Timeout が Request 全体を超えないようにする |
@@ -208,11 +208,11 @@ status=200 time=1.026585s
 
 ### Step 3. 外部 API 呼び出しを作る
 
-### やること
+#### やること
 
 Task の Status 変更時に、外部の通知 API へ POST する。
 
-### 外部 API から返ってくるもの
+#### 外部 API から返ってくるもの
 
 ```text
 Task 更新
@@ -229,7 +229,7 @@ Notification API
 **これらを同じ扱いにしてはいけない。**
 
 | 応答 | Retry すべきか | 理由 |
-|---|---|---|
+| --- | --- | --- |
 | 2xx | 不要 | 成功 |
 | 400 / 404 / 422 | **しない** | Request 自体が不正。何度送っても同じ結果になる |
 | 401 / 403 | **しない** | 認証・権限の問題。時間では解決しない |
@@ -238,7 +238,7 @@ Notification API
 | Timeout | する | 一時的な遅延の可能性がある |
 | 接続エラー | する | 相手が再起動中などの可能性がある |
 
-### 実行
+#### 実行
 
 `internal/notify/notifier.go`。
 
@@ -356,7 +356,7 @@ func (n *HTTPNotifier) postWithRetry(ctx context.Context, url string, body []byt
 
 ### Step 4. Backoff と Jitter
 
-### 実装
+#### 実装
 
 ```go
 // backoff は指数バックオフ + Jitter。
@@ -371,7 +371,7 @@ func (n *HTTPNotifier) backoff(attempt int) time.Duration {
 }
 ```
 
-### なぜ間隔を広げるのか
+#### なぜ間隔を広げるのか
 
 ```text
 固定間隔（1秒ごと）で Retry
@@ -387,7 +387,7 @@ func (n *HTTPNotifier) backoff(attempt int) time.Duration {
             └─ 相手に回復する時間を与える
 ```
 
-### なぜ Jitter が必要なのか
+#### なぜ Jitter が必要なのか
 
 ```mermaid
 flowchart TD
@@ -414,11 +414,11 @@ flowchart TD
 
 ### Step 5. 通知の失敗で本処理を失敗させない
 
-### やること
+#### やること
 
 通知が失敗しても、Task の更新は成功として扱う。
 
-### 実行
+#### 実行
 
 `internal/service/task.go`。
 
@@ -446,7 +446,7 @@ flowchart TD
 }
 ```
 
-### なぜこうするのか
+#### なぜこうするのか
 
 ```mermaid
 flowchart TD
@@ -471,11 +471,11 @@ flowchart TD
 
 ### Step 6. Retry の挙動をテストで確認する
 
-### やること
+#### やること
 
 外部 API を `httptest.Server` で再現し、Retry の挙動を検証する。
 
-### 実行
+#### 実行
 
 `internal/notify/notifier_test.go`（抜粋）。
 
@@ -604,7 +604,7 @@ func TestRetryStopsOnContextCancel(t *testing.T) {
 go test ./internal/notify/ -v
 ```
 
-### 期待結果
+#### 期待結果
 
 検証環境での実際の出力。
 
@@ -625,7 +625,7 @@ ok  	example.com/go-kanban/internal/notify	1.501s
 ```
 
 | 検証した挙動 | 結果 |
-|---|---|
+| --- | --- |
 | 200 → 試行 1 回 | ○ |
 | 400 / 404 → 試行 1 回で諦める | ○ |
 | 429 / 500 / 503 → 試行 3 回 | ○ |
@@ -669,7 +669,7 @@ sequenceDiagram
 ### HTTP メソッドと冪等性
 
 | メソッド | 仕様上の冪等性 | 補足 |
-|---|---|---|
+| --- | --- | --- |
 | GET | あり | 何度読んでも状態は変わらない |
 | PUT | あり | 同じ値で上書きするだけ |
 | DELETE | あり | 2回目は「すでに無い」だけ |
@@ -685,11 +685,11 @@ sequenceDiagram
 
 ### Step 7. Idempotency-Key を実装する
 
-### やること
+#### やること
 
 Client が発行した一意なキーで、処理済みのリクエストを識別する。
 
-### 実行
+#### 実行
 
 `migrations/004_idempotency.sql` を作る。
 
@@ -713,7 +713,7 @@ docker compose exec -T db \
 主キーが `(key, user_id, endpoint)` の3つである点が重要になる。
 
 | 含める理由 | |
-|---|---|
+| --- | --- |
 | `user_id` | キーを利用者ごとに分離する。共有すると、他人のキーを指定して**他人のレスポンスを読める** |
 | `endpoint` | 同じキーで別の API を叩いたとき、前の結果が返るのを防ぐ |
 
@@ -830,7 +830,7 @@ func (r *IdempotencyRepository) Save(...) error {
 	mux.Handle("POST /projects/{id}/tasks", idempotent(taskHandler.Create))
 ```
 
-### 判断の流れ
+#### 判断の流れ
 
 ```mermaid
 flowchart TD
@@ -856,7 +856,7 @@ flowchart TD
 
 ### Step 8. 動かして確認する
 
-### 実行
+#### 実行
 
 ```bash
 # Key なしで同じリクエストを2回
@@ -875,7 +875,7 @@ curl -i -b alice.txt -X POST localhost:8080/projects/1/tasks \
   -d '{"title":"idempotent task","priority":"low"}'
 ```
 
-### 期待結果
+#### 期待結果
 
 検証環境での実際の出力。
 
@@ -909,7 +909,7 @@ rows created: 1      ← Task は1件だけ
 ```
 
 | 確認項目 | Key なし | Key あり |
-|---|---|---|
+| --- | --- | --- |
 | 作成された Task | **2 件** | **1 件** |
 | 2回目の id | 別の id | **同じ id（205）** |
 | `Idempotent-Replay` ヘッダ | なし | **true** |
@@ -920,7 +920,7 @@ rows created: 1      ← Task は1件だけ
 <summary>本番運用で追加で考えること</summary>
 
 | 項目 | 検討事項 |
-|---|---|
+| --- | --- |
 | キーの有効期限 | 無期限に保存するとテーブルが肥大する。24時間〜7日程度で削除するバッチが必要 |
 | 処理中の再送 | 1回目がまだ処理中に再送が来ると、両方が処理を開始しうる。厳密には「処理中」レコードを先に INSERT して排他する |
 | リクエスト本文の検証 | 同じキーで**異なる本文**が来たら 422 を返すべき。今回は未実装 |
@@ -934,7 +934,7 @@ rows created: 1      ← Task は1件だけ
 ## この章のまとめ
 
 | 導入したもの | 防いだ問題 |
-|---|---|
+| --- | --- |
 | Request 全体の Timeout | Client が待っていない処理の滞留 |
 | Context の伝播 | DB クエリがキャンセルされず接続を占有する |
 | `http.Client{Timeout: ...}` | 応答しない相手への接続が残り続ける |
@@ -948,7 +948,7 @@ rows created: 1      ← Task は1件だけ
 | 成功時のみ保存 | 一時障害による失敗の永続化 |
 
 | 得られた検証データ | 値 |
-|---|---|
+| --- | --- |
 | Timeout（上限 2 秒、DB 3 秒） | 2.00 秒で 503 |
 | Retry（400 / 404） | 試行 1 回で終了 |
 | Retry（429 / 500 / 503） | 試行 3 回 |

@@ -7,7 +7,7 @@
 この章で2種類のログを整える。
 
 | | 通常ログ | 監査ログ（Audit Log） |
-|---|---|---|
+| --- | --- | --- |
 | 記録するもの | システムで何が起きたか | 誰が、いつ、何を変更したか |
 | 主な用途 | 障害調査、性能分析 | 変更履歴の追跡、責任の所在 |
 | 保存先 | 標準出力 → ログ基盤 | DB（`task_history`） |
@@ -34,7 +34,7 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 
 ### Step 1. なぜ構造化するのか
 
-### 非構造化ログ（よくある形）
+#### 非構造化ログ（よくある形）
 
 ```text
 2026/09/25 00:16:04 PATCH /tasks/1/status returned 200 in 13ms for user 1
@@ -48,7 +48,7 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 
 フォーマットが少しでも変わると、正規表現が壊れる。
 
-### 構造化ログ（JSON）
+#### 構造化ログ（JSON）
 
 ```json
 {"time":"2026-09-25T00:16:04.5955146+09:00","level":"INFO","msg":"http_request","request_id":"ca6440b20c408753","method":"GET","path":"/tasks/1","status":200,"duration_ms":3,"bytes":127,"user_id":1}
@@ -67,11 +67,11 @@ user_id = 1 AND status = 403      → 特定ユーザーの権限エラー
 
 ### Step 2. slog を設定する
 
-### やること
+#### やること
 
 Go 標準の `log/slog` で JSON ログを出す。
 
-### 実行
+#### 実行
 
 `cmd/api/main.go` の `main` で logger を作り、デフォルトに設定する。
 
@@ -96,11 +96,11 @@ func main() {
 
 ### Step 3. Request ID を付与する
 
-### やること
+#### やること
 
 1 Request を追跡するための ID を発行し、Response ヘッダにも返す。
 
-### 実行
+#### 実行
 
 `internal/middleware/observability.go` に middleware を追加する。
 
@@ -133,10 +133,10 @@ func newRequestID() string {
 }
 ```
 
-### 設計上の判断
+#### 設計上の判断
 
 | 判断 | 理由 |
-|---|---|
+| --- | --- |
 | Request ヘッダに既にあればそれを使う | ロードバランサや呼び出し元サービスが発行した ID を引き継ぐ。マイクロサービス間で同じ ID を辿れる |
 | Response ヘッダに返す | 利用者から「500 になった」と問い合わせがあったとき、ID を添えてもらえる。ログ基盤でその ID を検索すれば、その Request で起きたことだけを取り出せる |
 | Session ID とは別物 | Session ID は秘密情報。ログにも Response ヘッダにも出せない |
@@ -145,11 +145,11 @@ func newRequestID() string {
 
 ### Step 4. アクセスログを出す
 
-### やること
+#### やること
 
 1 Request につき 1 行のログを出す。
 
-### 実行
+#### 実行
 
 まず、書き込まれた Status を記録するラッパーを用意する。
 
@@ -240,7 +240,7 @@ type ResponseWriter interface {
 
 正直に書くと、この実装は最初うまく動かなかった。ハマった過程をそのまま載せる。
 
-### 最初の実装
+#### 最初の実装
 
 ```go
 // 期待どおりに動かなかった実装
@@ -249,7 +249,7 @@ if user, ok := httpx.CurrentUser(r.Context()); ok {
 }
 ```
 
-### 観測された結果
+#### 観測された結果
 
 認証は成功していて、Handler 側の `CurrentUser` も正しく User を返している。それでも `user_id` がログに一切出なかった。
 
@@ -257,7 +257,7 @@ if user, ok := httpx.CurrentUser(r.Context()); ok {
 {"level":"INFO","msg":"http_request","request_id":"d8819f43341464bd","method":"POST","path":"/projects/1/tasks","status":201,"duration_ms":3,"bytes":130}
 ```
 
-### 原因
+#### 原因
 
 `context.WithValue` は新しい Context を作る。元の Context は変更されない。
 
@@ -273,7 +273,7 @@ flowchart TD
 
 `AccessLog` は `RequireAuth` より外側にある。内側で作られた新しい Context は、外側には届かない。
 
-### 解決
+#### 解決
 
 外側で書き換え可能な入れ物を用意し、内側がその中身を書き換える。
 
@@ -324,7 +324,7 @@ func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
 
 ### Step 6. 動かして確認する
 
-### 実行
+#### 実行
 
 サーバーを起動し、別ターミナルから Request を送る。`/debug/slow` は Timeout まで 2 秒かかるので、`&` でバックグラウンド実行し、その間に次の Request を送る。
 
@@ -335,7 +335,7 @@ curl -b alice.txt 'localhost:8080/debug/slow?seconds=3' &
 curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
 ```
 
-### 期待結果
+#### 期待結果
 
 検証環境では、次のログが出た。ログは Request の完了順に並ぶため、`/debug/slow` が最後になる。
 
@@ -349,7 +349,7 @@ curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
 このログから、次のことが確認できる。
 
 | 項目 | 結果 |
-|---|---|
+| --- | --- |
 | `user_id` | 認証済み Request にのみ付く（`/health` には無い） |
 | `request_id` | 自動生成される |
 | ヘッダ由来の ID | `my-trace-123` がそのまま使われている |
@@ -366,11 +366,11 @@ curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
 
 ### Step 7. 漏洩していないか確認する
 
-### やること
+#### やること
 
 ログに機密情報が含まれていないか、実際に検索して確認する。
 
-### 実行
+#### 実行
 
 検索するには、ログがファイルに残っている必要がある。Step 6 でサーバーを標準出力のまま起動していた場合は、`go-kanban` ディレクトリでログをファイルに書き出す形で起動し直し、Step 6 の curl をもう一度実行する。
 
@@ -384,7 +384,7 @@ go run ./cmd/api > server.log 2>&1
 grep -icE 'kanban_session|password|set-cookie' server.log
 ```
 
-### 期待結果
+#### 期待結果
 
 一致した行数が表示される。0 なら漏洩していない。
 
@@ -395,10 +395,10 @@ grep -icE 'kanban_session|password|set-cookie' server.log
 > **NOTE**
 > 一致が 0 件のとき、`grep` は終了コード 1 を返す。スクリプトに組み込む場合は、失敗扱いにならないよう注意する。
 
-### 出してはいけないもの
+#### 出してはいけないもの
 
 | 種別 | 具体例 | 理由 |
-|---|---|---|
+| --- | --- | --- |
 | 認証情報 | パスワード、パスワードハッシュ | そのまま悪用できる |
 | セッション | Session ID、Cookie ヘッダ | ログを読める人が他人になりすませる |
 | トークン | API Key、Authorization ヘッダ、JWT | 同上 |
@@ -406,7 +406,7 @@ grep -icE 'kanban_session|password|set-cookie' server.log
 | 決済情報 | カード番号、CVV | 保存自体が規制対象 |
 | Request 本文 | POST body 全体 | 上記のいずれかが含まれうる |
 
-### なぜ厳しく扱うのか
+#### なぜ厳しく扱うのか
 
 ```text
 ログの特徴
@@ -419,7 +419,7 @@ grep -icE 'kanban_session|password|set-cookie' server.log
 
 アプリのメモリ上にしかない情報と違い、**ログに書いた時点で漏洩範囲が一段広がる**。
 
-### 実装上の対策
+#### 実装上の対策
 
 ```go
 // NG: ヘッダをまるごと出す
@@ -446,7 +446,7 @@ slog.Int64("user_id", fields.UserID)
 
 ### Step 8. 監査ログとして task_history を使う
 
-### 通常ログとの違い
+#### 通常ログとの違い
 
 ```text
 通常ログ
@@ -473,14 +473,14 @@ CREATE TABLE task_history (
 );
 ```
 
-### 実行
+#### 実行
 
 ```bash
 docker compose exec -T db psql -U kanban -d kanban -c \
   'SELECT task_id, user_id, action, old_value, new_value FROM task_history ORDER BY id;'
 ```
 
-### 期待結果
+#### 期待結果
 
 検証環境では、次の結果になった。
 
@@ -492,10 +492,10 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 (2 rows)
 ```
 
-### なぜ DB に保存するのか
+#### なぜ DB に保存するのか
 
 | | 通常ログ（標準出力） | 監査ログ（DB） |
-|---|---|---|
+| --- | --- | --- |
 | 保存の確実性 | ログ基盤が落ちれば欠落しうる | Transaction に含められる |
 | 検索 | ログ基盤の機能に依存 | SQL で自由に検索できる |
 | 整合性 | Task の更新と別々に記録される | Task の更新と同じ Transaction |
@@ -503,10 +503,10 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 
 Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task の更新も Rollback される。アプリ経由で更新する限り、「更新されたのに履歴がない」状態は起きない。
 
-### 監査ログに記録する項目
+#### 監査ログに記録する項目
 
 | 項目 | 本実装 | 一般的な要件 |
-|---|---|---|
+| --- | --- | --- |
 | 誰が | `user_id` | ○ |
 | いつ | `created_at` | ○ |
 | 何を | `task_id` | ○ |
@@ -548,7 +548,7 @@ Chapter 03 で決めた「利用者には一般的な文言、ログには詳細
 ## この章のまとめ
 
 | 導入したもの | 解決した問題 |
-|---|---|
+| --- | --- |
 | `slog` による JSON ログ | 検索・集計・アラート設定ができない |
 | `request_id` の発行と伝播 | 1 Request のログを絞り込めない |
 | ヘッダからの `request_id` 継承 | サービスをまたいだ追跡ができない |
