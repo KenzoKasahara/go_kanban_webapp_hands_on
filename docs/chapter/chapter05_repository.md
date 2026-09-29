@@ -2755,7 +2755,16 @@ curl -s -b ./cookie/alice.txt --get --data-urlencode "q=%' OR project_id > 0 --"
 
 `--data-urlencode` を使うと、`'` や空白を含む文字列を安全に URL へ載せられる。
 
-Chapter 04 でログアウトまで試した場合、`./cookie/alice.txt` の Session は無効になっている。401 が返ったら、Chapter 04 Step 6 のログインをやり直す（レスポンスは 204 になる）。
+Chapter 04 でログアウトまで試した場合、`./cookie/alice.txt` の Session は無効になっている。サーバの再起動や DB のリセットでも Session は消える。401 が返ったら、Chapter 04 Step 6 のログインをやり直す（レスポンスは 204 になる）。
+
+準備の Task 作成で何も表示されない場合も、原因は同じく Session 切れであることが多い。Project 作成が 401 になると、`sed` のパターンに一致しないエラー JSON がそのまま `ALICE_PROJECT` に入る。すると次の curl の URL に `{` `}` が含まれ、curl は URL を不正とみなして終了する（終了コード 3）。`-s` を付けているのでエラーメッセージも出ない。`echo "$ALICE_PROJECT"` で数字だけが表示されるか確かめ、JSON が表示されたらログインをやり直してから準備のコマンドを実行し直す。
+
+```bash
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'
+curl -s -w '\n%{http_code}\n' -c ./cookie/bob.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"bob@example.com","password":"bob-password-123"}'
+```
 
 #### 期待結果
 

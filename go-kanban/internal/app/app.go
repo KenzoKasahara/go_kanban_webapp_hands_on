@@ -69,13 +69,5 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, cfg Config) http.Handler {
 	mux.Handle("GET /projects/{id}/tasks", requireAuth(taskHandler.ListByProject))
 	mux.Handle("GET /tasks/{id}", requireAuth(taskHandler.Get))
 
-	// 検証用（Part 2・Part 3）。検証が終わったらこのブロックごと削除する。
-	if cfg.DebugRoutes {
-		debugHandler := handler.NewDebugHandler(service.NewDebugService(taskRepo, projectRepo))
-
-		mux.Handle("GET /debug/unsafe-search/{id}", requireAuth(debugHandler.UnsafeSearch))
-		mux.Handle("GET /debug/nplus1/{id}", requireAuth(debugHandler.NPlusOne))
-	}
-
 	return mux
 }
