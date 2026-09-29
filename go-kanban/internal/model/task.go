@@ -60,3 +60,39 @@ func (in CreateTaskInput) Validate() error {
 
 	return nil
 }
+
+// Status
+const (
+	StatusTodo  = "todo"
+	StatusDoing = "doing"
+	StatusDone  = "done"
+)
+
+// allowedTransitions は Status の遷移規則。
+// 「どの状態からどの状態へ行けるか」をデータとして持つと、
+// テストでも表として書け、分岐の書き漏らしに気づきやすい。
+var allowedTransitions = map[string][]string{
+	StatusTodo:  {StatusDoing},
+	StatusDoing: {StatusTodo, StatusDone},
+	StatusDone:  {StatusDoing},
+}
+
+// CanTransition は Status 遷移が業務上許可されるかを判断する。
+func CanTransition(from, to string) bool {
+	if from == to {
+		return false
+	}
+
+	for _, allowed := range allowedTransitions[from] {
+		if allowed == to {
+			return true
+		}
+	}
+
+	return false
+}
+
+func IsValidStatus(status string) bool {
+	_, ok := allowedTransitions[status]
+	return ok
+}

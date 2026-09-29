@@ -252,13 +252,6 @@ type Task struct {
 	AssigneeID  *int64 `json:"assignee_id"`
 }
 
-// TaskWithAssignee は Task に担当者のメールアドレスを添えたもの。
-// Part 3 の N+1 計測で使う。
-type TaskWithAssignee struct {
-	Task
-	AssigneeEmail string `json:"assignee_email"`
-}
-
 // CreateTaskInput は Service への入力。HTTP や JSON には依存しない。
 type CreateTaskInput struct {
 	ProjectID   int64
@@ -3057,13 +3050,14 @@ N+1 はコードを読むだけでは気づきにくい。ループの中の関�
 
 1. `internal/repository/task.go` の `// --- 検証用（Part 2・Part 3）。検証が終わったら、ここから下を削除する ---` の行から末尾までを削除する
 2. `internal/app/app.go` を Step 7 の内容に置き換える（`if cfg.DebugRoutes { ... }` のブロックを削除する）
-3. 検証用の Service と Handler を削除する
+3. `internal/model/task.go` の `TaskWithAssignee` 型を削除する（N+1 計測でしか使っていない）
+4. 検証用の Service と Handler を削除する
 
 ```bash
 rm internal/service/debug.go internal/handler/debug.go
 go build ./...
 go vet ./...
-grep -rn "SearchUnsafe\|DebugTaskQueries\|debug" internal/ || echo "検証用コードは残っていない"
+grep -rn "SearchUnsafe\|DebugTaskQueries\|TaskWithAssignee\|debug" internal/ || echo "検証用コードは残っていない"
 ```
 
 #### 期待結果

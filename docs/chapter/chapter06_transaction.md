@@ -457,7 +457,7 @@ Server A の Mutex は、Server B の処理を止められない。API サーバ
 #### Data Race と Lost Update は別の問題
 
 | | Data Race | Lost Update |
-|---|---|---|
+| --- | --- | --- |
 | 競合する場所 | Go プロセス内の共有メモリ（変数、map、slice） | DB 上の同じ行 |
 | 起こす主体 | 同じプロセス内の goroutine | 別々の Request、別々のサーバ、別々の DB セッション |
 | 検出方法 | `go test -race` | 並行 Request で再現し、DB の最終状態を確認する |
@@ -493,17 +493,32 @@ Part 1 の Data Race はメモリ上の競合だった。ここで扱うのは D
 
 #### 実行
 
+対象の Task の id は環境ごとに違う。前の章までの操作で、id が 1 から始まっているとは限らない。まず alice が書き込める Task を1つ選び、シェル変数 `TASK_ID` に入れておく。Step 11 でも同じ Task を使うので、同じターミナルで続けて作業する。
+
+```bash
+# alice が owner / member の Project から Task を1つ選ぶ
+TASK_ID=$(docker compose exec -T db psql -U kanban -d kanban -At -c "
+SELECT t.id FROM tasks t
+JOIN project_members pm ON pm.project_id = t.project_id
+JOIN users u ON u.id = pm.user_id
+WHERE u.email = 'alice@example.com' AND pm.role IN ('owner', 'member')
+ORDER BY t.id LIMIT 1;")
+echo "TASK_ID=$TASK_ID"
+```
+
+`TASK_ID=` の後ろが空なら、alice の Project に Task がない。alice でログインした状態で `POST /projects/{id}/tasks` を実行して Task を1つ作ってから、もう一度実行する。
+
 ```bash
 # 対象の Task を todo に戻す
 docker compose exec -T db psql -U kanban -d kanban -c \
-  "UPDATE tasks SET status='todo', version=1 WHERE id=2;"
+  "UPDATE tasks SET status='todo', version=1 WHERE id=$TASK_ID;"
 
-# セッション A: 読んでから2秒考えて 'doing' を書く（バックグラウンド）
+# セッション A: 読んでから5秒考えて 'doing' を書く（バックグラウンド）
 docker compose exec -T db psql -U kanban -d kanban -c "
 BEGIN;
-SELECT status AS a_read FROM tasks WHERE id=2;
-SELECT pg_sleep(2);
-UPDATE tasks SET status='doing' WHERE id=2;
+SELECT status AS a_read FROM tasks WHERE id=$TASK_ID;
+SELECT pg_sleep(5);
+UPDATE tasks SET status='doing' WHERE id=$TASK_ID;
 COMMIT;" &
 
 sleep 1
@@ -511,22 +526,24 @@ sleep 1
 # セッション B: 同じ値を読んで、すぐ 'done' を書く
 docker compose exec -T db psql -U kanban -d kanban -c "
 BEGIN;
-SELECT status AS b_read FROM tasks WHERE id=2;
-UPDATE tasks SET status='done' WHERE id=2;
+SELECT status AS b_read FROM tasks WHERE id=$TASK_ID;
+UPDATE tasks SET status='done' WHERE id=$TASK_ID;
 COMMIT;"
 
 # バックグラウンドのセッション A が終わるまで待つ
 wait
 
 docker compose exec -T db psql -U kanban -d kanban -c \
-  "SELECT id, status, version FROM tasks WHERE id=2;"
+  "SELECT id, status, version FROM tasks WHERE id=$TASK_ID;"
 ```
 
 途中の `sleep 1` は、A が先に SELECT するタイミングを作るためのもの。完了待ちには使わず、最後は `wait` で A の終了を待つ。
 
+A の `pg_sleep(5)` は、B が割り込む時間を確保するためのもの。`docker compose exec` は psql が動き出すまでに1〜数秒かかり、その時間は実行ごとに変わる。A が考えている時間が短いと、B の SELECT が A の COMMIT に間に合わない。
+
 #### 期待結果
 
-検証環境での実際の出力。セッションごとの見出しと初期状態の行は、読みやすくするため後から付けた。
+検証環境（`TASK_ID=2`）での実際の出力。セッションごとの見出しと初期状態の行は、読みやすくするため後から付けた。
 
 ```text
 初期状態: todo
@@ -550,6 +567,8 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 > **観測された問題**
 > A も B も `todo` を読んだ。B は `done` に変更して正常に COMMIT した。
 > しかし最終状態は `doing`。**B の更新は、エラーも警告もなく消えた。**
+
+`b_read` が `doing` になり、最終状態が `done` になった場合は、2つのセッションが重なっていない。B が SELECT する前に A の COMMIT が終わっていたので、B は最新の値を読んでから更新している。これは Lost Update ではない。出力の順番でも見分けられる。A の `BEGIN` から `COMMIT` までがすべて出てから B の `BEGIN` が出ていれば、順番に実行されている。この場合は `pg_sleep` の秒数を増やして、もう一度実行する。
 
 #### 時系列
 
@@ -581,7 +600,7 @@ sequenceDiagram
 #### なぜ厄介なのか
 
 | | |
-|---|---|
+| --- | --- |
 | エラーが出ない | 両方の UPDATE が「1行更新しました」と正常終了する |
 | ログに残らない | 異常ではないので記録されない |
 | 再現が難しい | タイミング依存。テストで偶然通ってしまう |
@@ -593,7 +612,7 @@ sequenceDiagram
 
 ## Part 3. 楽観ロック・状態遷移・Transaction を実装する
 
-### Step 6. version 付き UPDATE の仕組みを押さえる
+### Step 6. version を使った UPDATE を書く
 
 #### やること
 
@@ -634,7 +653,7 @@ B: UPDATE ... WHERE id=2 AND version=1
 <summary>楽観ロックと悲観ロックの使い分け</summary>
 
 | | 楽観ロック（採用） | 悲観ロック（`SELECT FOR UPDATE`） |
-|---|---|---|
+| --- | --- | --- |
 | 考え方 | 競合はめったに起きない前提。起きたら検出する | 先にロックを取り、他を待たせる |
 | ロック時間 | なし | 読んでから COMMIT までロックし続ける |
 | Web API との相性 | 良い。画面を開いたまま放置されてもロックが残らない | 悪い。HTTP はステートレスで、ユーザーがいつ戻るか分からない |
@@ -657,7 +676,7 @@ Status を「単なる文字列の更新」ではなく、業務ルールとし�
 
 #### 実行
 
-`internal/model/task.go`。
+`internal/model/task.go` に、次の定数と関数を追加する。既存の `Task` 型や `CreateTaskInput` はそのまま残す。
 
 ```go
 // Status
@@ -697,6 +716,8 @@ func IsValidStatus(status string) bool {
 }
 ```
 
+この時点ではまだどこからも呼ばれない。Step 9 の Service から使う。ここでは `go build ./...` が通ることだけ確認しておく。
+
 #### 許可する遷移
 
 ```mermaid
@@ -711,7 +732,7 @@ stateDiagram-v2
 許可しない遷移。
 
 | 遷移 | 理由 |
-|---|---|
+| --- | --- |
 | `todo` → `done` | 着手していないものが完了するのはおかしい。作業実態の記録が飛ぶ |
 | `done` → `todo` | 完了したものを未着手に戻すのは、通常は `doing` を経由する |
 | 同じ Status へ | 変更がないのに version を上げ、履歴を汚す |
@@ -730,7 +751,7 @@ Task の更新と履歴の追加を、1つの Transaction にまとめる。
 
 #### 実行
 
-まず履歴テーブルを作る。誰がいつ何を変えたかを追う用途は Chapter 08 で深掘りする。`migrations/003_history.sql`。
+まず履歴テーブルを作る。`migrations/003_history.sql`。
 
 ```sql
 CREATE TABLE task_history (
@@ -870,7 +891,7 @@ Commit 前に return すると、`defer` が Rollback を実行する。Commit �
 
 #### 実行
 
-`internal/service/task.go`。
+`internal/service/task.go` の `TaskService` に、次のメソッドを追加する。既存の `Create` / `Get` / `List` はそのまま残す。
 
 ```go
 // ChangeStatus は Status 変更の業務ルールをまとめて適用する。
@@ -925,6 +946,52 @@ func (s *TaskService) ChangeStatus(
 }
 ```
 
+Handler とルーティングも追加する。`internal/handler/task.go` の `TaskHandler` に、次の型とメソッドを追加する。Handler は Request を読んで Service に渡すだけで、判定は持たない。
+
+```go
+// changeStatusRequest の version は、Client が最後に読んだ Task の version。
+// 楽観ロックの判定に使う。
+type changeStatusRequest struct {
+	Status  string `json:"status"`
+	Version int    `json:"version"`
+}
+
+// ChangeStatus は PATCH /tasks/{id}/status
+func (h *TaskHandler) ChangeStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+
+	taskID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.RespondError(w, r, err)
+		return
+	}
+
+	var req changeStatusRequest
+
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.RespondError(w, r, err)
+		return
+	}
+
+	task, err := h.tasks.ChangeStatus(r.Context(), user.ID, taskID, req.Status, req.Version)
+	if err != nil {
+		httpx.RespondError(w, r, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, task)
+}
+```
+
+`internal/app/app.go` のルーティングに1行追加する。`GET /tasks/{id}` の次に置く。
+
+```go
+	mux.Handle("PATCH /tasks/{id}/status", requireAuth(taskHandler.ChangeStatus))
+```
+
 #### この順序はテストで発見した
 
 最初は「状態遷移チェック → version チェック」の順で実装していた。8並列で同じ version の更新を投げたところ、こうなった。
@@ -936,7 +1003,7 @@ func (s *TaskService) ChangeStatus(
 
 勝者が COMMIT した後に敗者が `FindForUser` で読み直すため、`current.Status` が既に `doing` になっている。そこへ `doing` への変更を要求するので「`doing` から `doing` へは遷移できない」という 400 になっていた。
 
-利用者から見ると、送った Request が不正だったわけではない。手元の情報が古かっただけだ。正しい案内は「再読み込みして、やり直してください」なので、返すべきは 409 だ。
+利用者から見ると、送った Request が不正だったわけではない。手元の情報が古かっただけだ。正しい案内は「再読み込みして、やり直してください」であり、それは 409 になる。
 
 version チェックを遷移チェックより先に移すと、敗者は全員 409 になった。
 
@@ -952,38 +1019,98 @@ version チェックを遷移チェックより先に移すと、敗者は全員
 
 ### Step 10. 順番に叩く
 
-#### 実行
+#### 準備: DB とサーバを起動する
 
-最初の POST で作った Task の id を応答で確認し、以降のコマンドの `tasks/1` をその id に置き換える。検証環境では id=1 が返った。
+`go-kanban/` ディレクトリで作業する。
+
+DB コンテナを止めている場合は起動する。動いていれば何も変わらない。
 
 ```bash
-# 準備
-curl -b alice.txt -X POST localhost:8080/projects/1/tasks \
-  -H 'Content-Type: application/json' -d '{"title":"write docs","priority":"high"}'
+docker compose up -d --wait
+```
 
+Step 8 の `migrations/003_history.sql` が適用済みか確認する。
+
+```bash
+docker compose exec -T db psql -U kanban -d kanban -c '\d task_history'
+```
+
+`Did not find any relation named "task_history".` と表示されたら、Step 8 の Migration を実行してから進む。
+
+前の Step までのサーバが動いたままなら、`Ctrl + C` で止める。止めないと変更前のコードが応答し続け、新しいサーバはポート 8080 を使えずに起動に失敗する。そのうえでビルドを確認し、サーバを起動する。
+
+```bash
+go vet ./...
+go run ./cmd/api
+```
+
+サーバはこのターミナルを占有する。以降のコマンドは別のターミナルで `go-kanban/` から実行する。Step 11 では Step 5 で設定した `TASK_ID` を使うので、Step 5 と同じターミナルを使うと設定し直さずに済む。
+
+#### 準備: ログインして Project を用意する
+
+サーバを起動し直すと Session は消えることがある（DB のリセットやログアウトでも消える）。alice でログインし直し、Cookie を Chapter 04 と同じ `./cookie/alice.txt` に保存する。
+
+```bash
+mkdir -p cookie
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'
+```
+
+最後の行が `204` ならログイン成功。`401` なら alice が未登録なので、Chapter 04 Step 6 のユーザー登録からやり直す。
+
+Project の id も環境ごとに違う。alice の Project を新しく作り、id を変数に控える。
+
+```bash
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+  -H 'Content-Type: application/json' -d '{"name":"Chapter06 Board"}' \
+  | sed -E 's/^\{"id":([0-9]+).*/\1/')
+echo "PROJECT_ID=$PROJECT_ID"
+```
+
+`PROJECT_ID=` の後ろに数字だけが表示されれば成功。JSON が表示された場合は Session が切れているので、ログインからやり直す。
+
+#### 実行
+
+まず Task を作り、レスポンスの id を変数 `NEW_TASK_ID` に控える。Step 11 で使う `TASK_ID`（Step 5 で設定）を上書きしないよう、別の名前にしている。
+
+```bash
+# 準備: Task を作り、id を控える
+TASK=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+  -H 'Content-Type: application/json' -d '{"title":"write docs","priority":"high"}')
+echo "$TASK"
+NEW_TASK_ID=$(echo "$TASK" | head -n 1 | sed -E 's/^\{"id":([0-9]+).*/\1/')
+echo "NEW_TASK_ID=$NEW_TASK_ID"
+```
+
+最後の行に `NEW_TASK_ID=` と数字だけが表示されれば成功。数字以外が表示された場合は、`echo "$TASK"` の出力でステータスコードとエラー内容を確認する。`401` なら前の準備のログインから、`404` なら `PROJECT_ID` の設定からやり直す。
+
+続けて、同じターミナルで Status を変更する。各コマンドは Response Body の次の行に HTTP Status Code を表示する。
+
+```bash
 # 不正な遷移
-curl -b alice.txt -X PATCH localhost:8080/tasks/1/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":1}'
 
 # 正常な遷移
-curl -b alice.txt -X PATCH localhost:8080/tasks/1/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"doing","version":1}'
 
 # 古い version で再実行
-curl -b alice.txt -X PATCH localhost:8080/tasks/1/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":1}'
 
 # 正しい version で実行
-curl -b alice.txt -X PATCH localhost:8080/tasks/1/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":2}'
 ```
 
 #### 期待結果
 
-検証環境での実際の出力。
+検証環境（`NEW_TASK_ID=1`）での実際の出力。`id` の値は環境によって変わる。
 
 | 操作 | Status | Response |
-|---|---|---|
+| --- | --- | --- |
 | `todo` → `done`（不正な遷移） | 400 | `{"error":{"code":"invalid_request","message":"cannot change status from todo to done"}}` |
 | `todo` → `doing`（正常） | 200 | `{"id":1,...,"status":"doing","version":2,...}` |
 | 古い `version:1` で更新 | 409 | `{"error":{"code":"conflict","message":"task was updated by another request; reload and retry"}}` |
@@ -995,7 +1122,7 @@ version が 1 → 2 → 3 と増えていることを確認する。
 
 ```bash
 docker compose exec -T db psql -U kanban -d kanban -c \
-  'SELECT task_id, user_id, action, old_value, new_value FROM task_history ORDER BY id;'
+  "SELECT task_id, user_id, action, old_value, new_value FROM task_history WHERE task_id=$NEW_TASK_ID ORDER BY id;"
 ```
 
 実際の出力。
@@ -1020,17 +1147,17 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 
 #### 実行
 
-Part 2 の Step 5 で使った Task #2 は `doing` のまま残っている。このままだと `doing` から `doing` への遷移になり、8件とも 400 になる。先に `todo` / version=1 へ戻しておく。
+Part 2 の Step 5 で使った Task（`$TASK_ID`）は `doing` のまま残っている。このままだと `doing` から `doing` への遷移になり、8件とも 400 になる。先に `todo` / version=1 へ戻しておく。ターミナルを開き直した場合は、Step 5 の SELECT をもう一度実行して `TASK_ID` を設定し直す。
 
 ```bash
 # 対象の Task を todo / version=1 に戻す
 docker compose exec -T db psql -U kanban -d kanban -c \
-  "UPDATE tasks SET status='todo', version=1 WHERE id=2;"
+  "UPDATE tasks SET status='todo', version=1 WHERE id=$TASK_ID;"
 
 # 8並列で同じ version の更新を投げ、全部終わるまで wait で待つ
 for i in 1 2 3 4 5 6 7 8; do
-  ( curl -s -o /dev/null -w "%{http_code}\n" -b alice.txt \
-      -X PATCH localhost:8080/tasks/2/status \
+  ( curl -s -o /dev/null -w "%{http_code}\n" -b ./cookie/alice.txt \
+      -X PATCH localhost:8080/tasks/$TASK_ID/status \
       -H 'Content-Type: application/json' \
       -d '{"status":"doing","version":1}' > "code_$i.txt" ) &
 done
@@ -1039,16 +1166,16 @@ cat code_*.txt | sort | uniq -c
 
 # DB の状態を確認
 docker compose exec -T db psql -U kanban -d kanban -c \
-  "SELECT id, status, version FROM tasks WHERE id=2;"
+  "SELECT id, status, version FROM tasks WHERE id=$TASK_ID;"
 docker compose exec -T db psql -U kanban -d kanban -c \
-  "SELECT count(*) FROM task_history WHERE task_id=2;"
+  "SELECT count(*) FROM task_history WHERE task_id=$TASK_ID;"
 ```
 
 Part 1 の Step 1 で見たとおり、Sleep で「たぶん終わった」と待つのは確実ではない。シェルでは `wait` がバックグラウンドのジョブ全部の終了を待つ。Go の `sync.WaitGroup` と同じ役割だ。
 
 #### 期待結果
 
-検証環境での実際の出力。DB の確認結果は読みやすく整形している。
+検証環境（`TASK_ID=2`）での実際の出力。psql の出力をそのまま載せている。
 
 ```text
    1 200
@@ -1059,12 +1186,16 @@ Part 1 の Step 1 で見たとおり、Sleep で「たぶん終わった」と�
  id | status | version
 ----+--------+---------
   2 | doing  |       2
+(1 row)
 
-history rows: 1
+ count
+-------
+     1
+(1 row)
 ```
 
 | 確認項目 | 結果 |
-|---|---|
+| --- | --- |
 | 成功した Request | 1件のみ |
 | 競合として拒否 | 7件（409） |
 | version | 1 → 2（1回だけ増えた） |
@@ -1103,7 +1234,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
    CHECK (new_value <> 'done') NOT VALID;"
 
 # doing -> done を実行（Task の UPDATE は成功、history の INSERT が失敗する）
-curl -i -b alice.txt -X PATCH localhost:8080/tasks/206/status \
+curl -i -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/206/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":1}'
 
 # DB の状態を確認
@@ -1122,7 +1253,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 
 #### 期待結果
 
-検証環境での実際の出力。DB の確認結果は読みやすく整形している。
+検証環境での実際の出力。psql の出力をそのまま載せている（`←` の注記だけ説明用に追記）。
 
 **実行前。**
 
@@ -1130,8 +1261,12 @@ docker compose exec -T db psql -U kanban -d kanban -c \
  id  | status | version
 -----+--------+---------
  206 | doing  |       1
+(1 row)
 
-history rows before: 2
+ count
+-------
+     2
+(1 row)
 ```
 
 **レスポンス。**
@@ -1150,9 +1285,15 @@ HTTP/1.1 500 Internal Server Error
  id  | status | version
 -----+--------+---------
  206 | doing  |       1        ← 変わっていない
+(1 row)
 
-history rows after: 2          ← 増えていない
+ count
+-------
+     2          ← 増えていない
+(1 row)
 ```
+
+履歴の件数は、その Task の過去の操作回数で変わる（検証環境では 2、履歴のない Task なら 0）。確認するのは件数そのものではなく、実行前と実行後で件数が同じであることだ。
 
 **サーバログ。**
 
@@ -1169,6 +1310,7 @@ status=200
 ```
 
 > **観測されたこと**
+>
 > - Task の UPDATE は一度成功していたが、履歴の INSERT が失敗したため両方とも取り消された
 > - Client には一般的な 500 メッセージだけが返った
 > - テーブル名・制約名・SQLSTATE はサーバログにだけ残った（Chapter 03 の設計が効いている）
@@ -1182,7 +1324,7 @@ Transaction がなければ、`status='done'` かつ履歴なし、という不�
 すべての処理を Transaction で囲む必要はない。
 
 | 条件 | 例 | Transaction |
-|---|---|---|
+| --- | --- | --- |
 | 複数テーブルを更新し、一方だけ成功すると矛盾する | Task 更新 + 履歴追加 | 必要 |
 | 複数行を更新し、途中で止まると矛盾する | Project 作成 + Owner 登録 | 必要 |
 | 単一行の UPDATE / INSERT | Task の title だけ変更 | 不要（単文は原子的） |
@@ -1198,7 +1340,7 @@ Transaction がなければ、`status='done'` かつ履歴なし、という不�
 ## この章の検証結果
 
 | 得られた検証データ | 値 |
-|---|---|
+| --- | --- |
 | 1000 goroutine で同期なしに `counter++` | 980〜998（1000 にならない）。`-race` で `DATA RACE` を検出 |
 | Mutex で保護した場合 | 3回とも `counter=1000`。`-race` の警告なし |
 | 楽観ロックなしの同時更新 | 片方の更新が消失（エラーなし） |

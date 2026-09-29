@@ -99,3 +99,39 @@ func (h *TaskHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteJSON(w, http.StatusOK, task)
 }
+
+// changeStatusRequest の version は、Client が最後に読んだ Task の version。
+// 楽観ロックの判定に使う。
+type changeStatusRequest struct {
+	Status  string `json:"status"`
+	Version int    `json:"version"`
+}
+
+// ChangeStatus は PATCH /tasks/{id}/status
+func (h *TaskHandler) ChangeStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+
+	taskID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.RespondError(w, r, err)
+		return
+	}
+
+	var req changeStatusRequest
+
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.RespondError(w, r, err)
+		return
+	}
+
+	task, err := h.tasks.ChangeStatus(r.Context(), user.ID, taskID, req.Status, req.Version)
+	if err != nil {
+		httpx.RespondError(w, r, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, task)
+}

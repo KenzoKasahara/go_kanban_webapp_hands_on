@@ -68,6 +68,7 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, cfg Config) http.Handler {
 	mux.Handle("POST /projects/{id}/tasks", requireAuth(taskHandler.Create))
 	mux.Handle("GET /projects/{id}/tasks", requireAuth(taskHandler.ListByProject))
 	mux.Handle("GET /tasks/{id}", requireAuth(taskHandler.Get))
+	mux.Handle("PATCH /tasks/{id}/status", requireAuth(taskHandler.ChangeStatus))
 
 	return mux
 }

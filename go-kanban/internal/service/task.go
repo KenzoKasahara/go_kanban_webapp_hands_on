@@ -69,3 +69,54 @@ func (s *TaskService) List(ctx context.Context, userID, projectID int64, keyword
 
 	return s.tasks.Search(ctx, projectID, keyword)
 }
+
+// ChangeStatus は Status 変更の業務ルールをまとめて適用する。
+//
+// Handler ではなく Service に置く理由:
+// CLI・Batch・別APIから同じ操作を行っても、同じルールが適用されるようにするため。
+func (s *TaskService) ChangeStatus(
+	ctx context.Context,
+	userID, taskID int64,
+	newStatus string,
+	version int,
+) (model.Task, error) {
+	if !model.IsValidStatus(newStatus) {
+		return model.Task{}, model.Invalid("status must be one of: todo, doing, done")
+	}
+
+	// 認可: アクセスできないTaskは 404 として扱われる。
+	current, role, err := s.tasks.FindForUser(ctx, taskID, userID)
+	if err != nil {
+		return model.Task{}, err
+	}
+
+	if !model.CanWriteTask(role) {
+		return model.Task{}, model.ErrForbidden
+	}
+
+	// 競合検出は業務ルール判定より先に行う。
+	//
+	// 逆順にすると、他Requestが先に doing へ変えた直後の Request は
+	// 「doing から doing へは遷移できない」という 400 になる。
+	// 利用者にとっての事実は「手元の情報が古い」なので 409 を返し、
+	// 再読み込みを促す。
+	if current.Version != version {
+		return model.Task{}, model.Public(model.ErrConflict,
+			"task was updated by another request; reload and retry")
+	}
+
+	// 業務ルール: 許可された遷移かどうか。
+	if !model.CanTransition(current.Status, newStatus) {
+		return model.Task{}, model.Invalid(
+			"cannot change status from " + current.Status + " to " + newStatus)
+	}
+
+	// 同時更新検出: 読んだ version のまま更新できるか。
+	updated, err := s.tasks.UpdateStatusWithHistory(
+		ctx, taskID, userID, current.Status, newStatus, version)
+	if err != nil {
+		return model.Task{}, err
+	}
+
+	return updated, nil
+}

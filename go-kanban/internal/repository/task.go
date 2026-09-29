@@ -18,6 +18,12 @@ type TaskRepository interface {
 	FindForUser(ctx context.Context, taskID, userID int64) (model.Task, string, error)
 	ListByProject(ctx context.Context, projectID int64) ([]model.Task, error)
 	Search(ctx context.Context, projectID int64, keyword string) ([]model.Task, error)
+	UpdateStatusWithHistory(
+		ctx context.Context,
+		taskID, userID int64,
+		oldStatus, newStatus string,
+		version int,
+	) (model.Task, error)
 }
 
 // コンパイル時に「PgTaskRepository は TaskRepository を満たすか」を確認する。
@@ -158,4 +164,60 @@ func (r *PgTaskRepository) Search(
 	}
 
 	return collectTasks(rows)
+}
+
+// UpdateStatusWithHistory は Task 更新と履歴追加を1つの Transaction で行う。
+// 履歴だけ失敗した場合、Task の更新も残さない。
+func (r *PgTaskRepository) UpdateStatusWithHistory(
+	ctx context.Context,
+	taskID, userID int64,
+	oldStatus, newStatus string,
+	version int,
+) (model.Task, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return model.Task{}, fmt.Errorf("begin tx: %w", err)
+	}
+
+	// Commit 済みなら Rollback は何もしない。
+	// 途中 return でも必ず Rollback されるための保険。
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(
+		ctx,
+		`UPDATE tasks
+		 SET status = $1, version = version + 1, updated_at = NOW()
+		 WHERE id = $2 AND version = $3
+		 RETURNING `+taskColumns,
+		newStatus, taskID, version,
+	)
+
+	task, err := scanTask(row)
+
+	// 0件 = 「Taskが無い」か「versionが古い」。
+	// Service の FindForUser で存在確認を通っているので、ここでは競合として扱う。
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Task{}, model.Public(model.ErrConflict,
+			"task was updated by another request; reload and retry")
+	}
+
+	if err != nil {
+		return model.Task{}, fmt.Errorf("update task status: %w", err)
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		`INSERT INTO task_history (task_id, user_id, action, old_value, new_value)
+		 VALUES ($1, $2, 'status_changed', $3, $4)`,
+		taskID, userID, oldStatus, newStatus,
+	)
+	if err != nil {
+		return model.Task{}, fmt.Errorf("insert task history: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return model.Task{}, fmt.Errorf("commit: %w", err)
+	}
+
+	return task, nil
 }
