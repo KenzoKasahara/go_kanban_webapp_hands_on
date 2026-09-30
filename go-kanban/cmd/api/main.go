@@ -16,8 +16,10 @@ import (
 )
 
 func main() {
-	// ログの形式は Chapter 08 で JSON に変える。
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	// 構造化ログ。JSONで出すと、検索・集計・アラート設定がしやすい。
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
@@ -48,6 +50,8 @@ func run(logger *slog.Logger) error {
 	cfg := app.DefaultConfig()
 	// Part 2・Part 3 の検証中だけ DEBUG_ROUTES=1 で起動する。
 	cfg.DebugRoutes = os.Getenv("DEBUG_ROUTES") == "1"
+	// 通知 API の URL。未設定なら通知しない。
+	cfg.NotifyURL = os.Getenv("NOTIFY_URL")
 
 	server := &http.Server{
 		Addr:              ":8080",

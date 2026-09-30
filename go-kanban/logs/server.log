@@ -1,0 +1,11 @@
+{"time":"2026-09-30T19:45:15.0952379+09:00","level":"INFO","msg":"server started","addr":":8080"}
+{"time":"2026-09-30T19:45:35.4801895+09:00","level":"INFO","msg":"http_request","request_id":"390aa6c3bcc83890","method":"GET","path":"/tasks/259","status":200,"duration_ms":4,"bytes":129,"user_id":1}
+{"time":"2026-09-30T19:45:35.6143057+09:00","level":"INFO","msg":"http_request","request_id":"e76bd5f84399b8d8","method":"GET","path":"/health","status":200,"duration_ms":0,"bytes":16}
+{"time":"2026-09-30T19:45:35.8886137+09:00","level":"INFO","msg":"http_request","request_id":"my-trace-123","method":"GET","path":"/tasks/259","status":200,"duration_ms":22,"bytes":129,"user_id":1}
+{"time":"2026-09-30T19:45:37.7563782+09:00","level":"ERROR","msg":"http_request","request_id":"1ade5293f0cb2524","method":"GET","path":"/debug/slow","status":503,"duration_ms":2000,"bytes":59,"user_id":1}
+{"time":"2026-09-30T19:46:23.3677045+09:00","level":"INFO","msg":"http_request","request_id":"f77eebd5b54f8e01","method":"POST","path":"/login","status":204,"duration_ms":52,"bytes":0}
+{"time":"2026-09-30T19:46:23.6226037+09:00","level":"INFO","msg":"http_request","request_id":"2c6f635b3fcddb77","method":"POST","path":"/projects","status":201,"duration_ms":5,"bytes":35,"user_id":1}
+{"time":"2026-09-30T19:46:23.7743759+09:00","level":"INFO","msg":"http_request","request_id":"d69c3c95232309df","method":"POST","path":"/projects/34/tasks","status":201,"duration_ms":5,"bytes":127,"user_id":1}
+{"time":"2026-09-30T19:46:32.3461572+09:00","level":"INFO","msg":"http_request","request_id":"audit-1","method":"PATCH","path":"/tasks/261/status","status":200,"duration_ms":6,"bytes":128,"user_id":1}
+{"time":"2026-09-30T19:46:32.7018+09:00","level":"INFO","msg":"http_request","request_id":"audit-2","method":"PATCH","path":"/tasks/261/status","status":409,"duration_ms":1,"bytes":96,"user_id":1}
+{"time":"2026-09-30T19:46:33.1117182+09:00","level":"INFO","msg":"http_request","request_id":"audit-3","method":"PATCH","path":"/tasks/261/status","status":200,"duration_ms":5,"bytes":127,"user_id":1}

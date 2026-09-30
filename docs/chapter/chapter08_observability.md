@@ -102,7 +102,38 @@ func main() {
 
 #### 実行
 
-`internal/middleware/observability.go` に middleware を追加する。
+まず、Request ID を Context に出し入れする関数を `internal/httpx/httpx.go` の `CurrentUser` の下に追加する。middleware が書き込み、Step 4 のアクセスログが読み出す。
+
+```go
+const requestIDContextKey contextKey = "request_id"
+
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDContextKey, id)
+}
+
+// RequestIDFrom は RequestID middleware が載せた ID を取り出す。
+// middleware を通っていない場合は空文字を返す。
+func RequestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDContextKey).(string)
+	return id
+}
+```
+
+次に、`internal/middleware/observability.go` の import を次のように変える。
+
+```go
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+	"time"
+
+	"example.com/go-kanban/internal/httpx"
+)
+```
+
+同じファイルの末尾（`Timeout` の後ろ）に middleware を追加する。
 
 ```go
 const RequestIDHeader = "X-Request-Id"
@@ -151,7 +182,7 @@ func newRequestID() string {
 
 #### 実行
 
-まず、書き込まれた Status を記録するラッパーを用意する。
+まず、書き込まれた Status を記録するラッパーを用意する。`internal/middleware/observability.go` の末尾（Step 3 で追加した `newRequestID` の後ろ）に追加する。
 
 ```go
 // statusRecorder は書き込まれたStatusを記録する。
@@ -175,7 +206,7 @@ func (w *statusRecorder) Write(b []byte) (int, error) {
 }
 ```
 
-このラッパーを使って、Handler の処理が終わった後に 1 行のログを出す。
+このラッパーを使って、Handler の処理が終わった後に 1 行のログを出す。同じ `observability.go` の末尾（`statusRecorder` の後ろ）に追加し、import に `"log/slog"` を足す。
 
 ```go
 // AccessLog は1Requestにつき1行の構造化ログを出す。
@@ -187,13 +218,10 @@ func AccessLog(logger *slog.Logger, next http.Handler) http.Handler {
 		start := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
-		// 内側のmiddlewareが user_id を書き込めるよう、先に入れ物を用意する。
-		ctx, fields := httpx.WithLogFields(r.Context())
-
-		next.ServeHTTP(recorder, r.WithContext(ctx))
+		next.ServeHTTP(recorder, r)
 
 		attrs := []slog.Attr{
-			slog.String("request_id", httpx.RequestIDFrom(ctx)),
+			slog.String("request_id", httpx.RequestIDFrom(r.Context())),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", recorder.status),
@@ -201,8 +229,8 @@ func AccessLog(logger *slog.Logger, next http.Handler) http.Handler {
 			slog.Int("bytes", recorder.bytes),
 		}
 
-		if fields.UserID != 0 {
-			attrs = append(attrs, slog.Int64("user_id", fields.UserID))
+		if user, ok := httpx.CurrentUser(r.Context()); ok {
+			attrs = append(attrs, slog.Int64("user_id", user.ID))
 		}
 
 		level := slog.LevelInfo
@@ -210,10 +238,30 @@ func AccessLog(logger *slog.Logger, next http.Handler) http.Handler {
 			level = slog.LevelError
 		}
 
-		logger.LogAttrs(ctx, level, "http_request", attrs...)
+		logger.LogAttrs(r.Context(), level, "http_request", attrs...)
 	})
 }
 ```
+
+最後に、`internal/app/app.go` の `New` の末尾で middleware を組み込む。`// Chapter 08 で、...` のコメントがある箇所を次のように書き換える。
+
+```go
+	// Middleware は外側から順に適用される。
+	// RequestID → AccessLog → Timeout → mux の順に通る。
+	var h http.Handler = mux
+	h = middleware.Timeout(cfg.RequestTimeout, h)
+	h = middleware.AccessLog(logger, h)
+	h = middleware.RequestID(h)
+
+	return h
+```
+
+後から包んだものほど外側になる。並び順には次の理由がある。
+
+| 順序 | 理由 |
+| --- | --- |
+| `RequestID` を `AccessLog` より外側に置く | `AccessLog` が Context から Request ID を読むため、先に載せておく必要がある |
+| `AccessLog` を `Timeout` より外側に置く | Timeout で打ち切られた Request も含めて、所要時間と Status を記録するため |
 
 <details>
 <summary>GO NOTE: なぜ <code>statusRecorder</code> が必要なのか</summary>
@@ -238,9 +286,11 @@ type ResponseWriter interface {
 
 ### Step 5. Context の不変性でつまずく
 
-正直に書くと、この実装は最初うまく動かなかった。ハマった過程をそのまま載せる。
+正直に書くと、Step 4 の実装は `user_id` の部分がうまく動かなかった。ハマった過程をそのまま載せる。
 
 #### 最初の実装
+
+Step 4 の `AccessLog` のうち、次の部分が問題になる。
 
 ```go
 // 期待どおりに動かなかった実装
@@ -277,7 +327,7 @@ flowchart TD
 
 外側で書き換え可能な入れ物を用意し、内側がその中身を書き換える。
 
-入れ物は `internal/httpx/httpx.go` に定義する。
+入れ物は `internal/httpx/httpx.go` の `RequestIDFrom` の下に定義する。
 
 ```go
 // LogFields は1Requestの間だけ共有される、書き換え可能なログ情報。
@@ -303,7 +353,43 @@ func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
 }
 ```
 
-書き込むのは `internal/middleware/auth.go` の認証処理。
+入れ物を用意するのは `AccessLog`。`internal/middleware/observability.go` の `AccessLog` を次のように書き換える。変更点は、`next` を呼ぶ前に入れ物を作ることと、`user_id` を入れ物から読むことの 2 つ。
+
+```go
+func AccessLog(logger *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		// 内側のmiddlewareが user_id を書き込めるよう、先に入れ物を用意する。
+		ctx, fields := httpx.WithLogFields(r.Context())
+
+		next.ServeHTTP(recorder, r.WithContext(ctx))
+
+		attrs := []slog.Attr{
+			slog.String("request_id", httpx.RequestIDFrom(ctx)),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", recorder.status),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+			slog.Int("bytes", recorder.bytes),
+		}
+
+		if fields.UserID != 0 {
+			attrs = append(attrs, slog.Int64("user_id", fields.UserID))
+		}
+
+		level := slog.LevelInfo
+		if recorder.status >= http.StatusInternalServerError {
+			level = slog.LevelError
+		}
+
+		logger.LogAttrs(ctx, level, "http_request", attrs...)
+	})
+}
+```
+
+書き込むのは `internal/middleware/auth.go` の `RequireAuth`。末尾の `next.ServeHTTP` の直前に、入れ物へ `user_id` を書く処理を追加する。
 
 ```go
 		// アクセスログへ user_id を載せる。
@@ -326,18 +412,69 @@ func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
 
 #### 実行
 
-サーバーを起動し、別ターミナルから Request を送る。`/debug/slow` は Timeout まで 2 秒かかるので、`&` でバックグラウンド実行し、その間に次の Request を送る。
+`go-kanban/` でサーバーを起動する。`/debug/slow` を使うので `DEBUG_ROUTES=1` を付ける。
 
 ```bash
-curl -b alice.txt localhost:8080/tasks/1
-curl localhost:8080/health
-curl -b alice.txt 'localhost:8080/debug/slow?seconds=3' &
-curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
+DEBUG_ROUTES=1 go run ./cmd/api
 ```
+
+別のターミナルで、同じく `go-kanban/` から Request を送る。Session Cookie は有効期限が 24 時間なので、先にログインし直して `./cookie/alice.txt` を上書きしておく。
+
+```bash
+# Session を取り直す（Chapter 04 と同じディレクトリで実行する）
+mkdir -p cookie
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'    # → 204
+```
+
+読み取り対象の Task を alice の Project に作り、その ID を控える。Task の ID はそれまでに作ったデータの量で変わるので、`/tasks/1` のように決め打ちすると、他人の Task や存在しない Task を指して 404 になる。
+
+```bash
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+  -H 'Content-Type: application/json' -d '{"name":"Chapter08 Board"}' \
+  | sed -E 's/^\{"id":([0-9]+).*/\1/')
+echo "PROJECT_ID=$PROJECT_ID"
+
+TASK_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+  -H 'Content-Type: application/json' -d '{"title":"observe me","priority":"low"}' \
+  | sed -E 's/^\{"id":([0-9]+).*/\1/')
+echo "TASK_ID=$TASK_ID"
+```
+
+どちらも `=` の後ろに数字だけが表示されれば成功。JSON が表示された場合は Session が切れているので、ログインからやり直す。
+
+ログを確認するための Request を送る。`/debug/slow` は Timeout まで 2 秒かかるので、`&` でバックグラウンド実行し、その間に次の Request を送る。
+
+```bash
+curl -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID
+curl localhost:8080/health
+curl -b ./cookie/alice.txt 'localhost:8080/debug/slow?seconds=3' &
+curl -H 'X-Request-Id: my-trace-123' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID
+```
+
+4 つの Request は、それぞれ別のことを確認するために送る。ERROR ログ（503）を出すのは `/debug/slow` だけで、ほかの 3 つは 200 になる。
+
+| Request | 確認すること | 期待するログ |
+| --- | --- | --- |
+| `GET /tasks/$TASK_ID` | `request_id` が自動生成される | INFO / 200 / `user_id` あり |
+| `GET /health` | 認証なしの Request には `user_id` が付かない | INFO / 200 / `user_id` なし |
+| `GET /debug/slow?seconds=3` | Timeout した Request が ERROR になる | ERROR / 503 / 約 2000 ms |
+| `GET /tasks/$TASK_ID`（`X-Request-Id` 付き） | ヘッダで渡した ID がそのまま使われる | INFO / 200 / `request_id` が `my-trace-123` |
+
+> **NOTE**
+> `/debug/slow` が 404 を返す場合は、サーバーを `DEBUG_ROUTES=1` なしで起動している。このルートは `DEBUG_ROUTES=1` のときだけ登録される。
+>
+> 3 秒待って 200 が返る場合は、Timeout が効いていない。[Chapter 07](./chapter07_resilience.md) の `Timeout` middleware と `RequestTimeout`（2 秒）の設定を確認する。
+>
+> ログに `status=401` が出て `user_id` が無い場合は、Cookie が送られていない。`-b` に存在しないファイルを渡しても curl はエラーを出さず、Cookie を付けずに送信する。カレントディレクトリが `go-kanban/` か、ログインし直したかを確認する。
+>
+> ログが `time=... level=INFO msg=http_request ...` のようなテキスト形式で出る場合は、`main.go` が `slog.NewTextHandler` のままになっている。[Step 2](#step-2-slog-を設定する) の `slog.NewJSONHandler` に置き換えてから起動し直す。
+>
+> 認証済みの Request なのに `user_id` が出ない場合は、[Step 5](#step-5-context-の不変性でつまずく) で `RequireAuth` に追加する `fields.UserID = user.ID` が抜けている。
 
 #### 期待結果
 
-検証環境では、次のログが出た。ログは Request の完了順に並ぶため、`/debug/slow` が最後になる。
+検証環境では、次のログが出た。ログは Request の完了順に並ぶため、`/debug/slow` が最後になる。ログイン・Project 作成・Task 作成の行は省略している。`/tasks/` の後ろの ID と `user_id` は環境によって変わる。
 
 ```json
 {"time":"2026-09-25T00:16:04.5955146+09:00","level":"INFO","msg":"http_request","request_id":"ca6440b20c408753","method":"GET","path":"/tasks/1","status":200,"duration_ms":3,"bytes":127,"user_id":1}
@@ -375,13 +512,14 @@ curl -H 'X-Request-Id: my-trace-123' -b alice.txt localhost:8080/tasks/1
 検索するには、ログがファイルに残っている必要がある。Step 6 でサーバーを標準出力のまま起動していた場合は、`go-kanban` ディレクトリでログをファイルに書き出す形で起動し直し、Step 6 の curl をもう一度実行する。
 
 ```bash
-go run ./cmd/api > server.log 2>&1
+mkdir -p logs
+DEBUG_ROUTES=1 go run ./cmd/api > logs/server.log 2>&1
 ```
 
 ログが溜まったら、機密情報に関係する文字列を数える。
 
 ```bash
-grep -icE 'kanban_session|password|set-cookie' server.log
+grep -icE 'kanban_session|password|set-cookie' logs/server.log
 ```
 
 #### 期待結果
@@ -444,9 +582,7 @@ slog.Int64("user_id", fields.UserID)
 
 ## Part 3. Audit Log
 
-### Step 8. 監査ログとして task_history を使う
-
-#### 通常ログとの違い
+Part 1 の通常ログは「Request がどうなったか」を記録する。Part 3 では、Chapter 06 で作った `task_history` を監査ログとして使い、「誰が何を変えたか」を追えることを確かめる。
 
 ```text
 通常ログ
@@ -459,25 +595,43 @@ slog.Int64("user_id", fields.UserID)
   user_id=1, task_id=1, action=status_changed, old=todo, new=doing
 ```
 
-Chapter 06 で作った `task_history` が、そのまま監査ログになる。
+1 回の Status 変更で、2 つのログが別々の場所に残る。
 
-```sql
-CREATE TABLE task_history (
-    id BIGSERIAL PRIMARY KEY,
-    task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    action TEXT NOT NULL,
-    old_value TEXT NOT NULL DEFAULT '',
-    new_value TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+```mermaid
+sequenceDiagram
+    participant C as curl
+    participant M as Middleware
+    participant R as Repository
+    participant DB as PostgreSQL
+    participant L as logs/server.log
+
+    C->>M: PATCH /tasks/{id}/status<br/>X-Request-Id: audit-1
+    M->>R: UpdateStatusWithHistory
+    R->>DB: BEGIN
+    R->>DB: UPDATE tasks
+    R->>DB: INSERT INTO task_history
+    R->>DB: COMMIT
+    R-->>M: 更新後の Task
+    M->>L: http_request ログ（request_id, status, user_id）
+    M-->>C: 200
 ```
+
+監査ログ（`task_history`）は Transaction の中で書き、通常ログ（`http_request`）は Response を返す直前に middleware が書く。Part 3 はこの 2 つを順に確認し、最後に突き合わせる。
+
+---
+
+### Step 8. task_history の構造を確認する
+
+#### やること
+
+監査ログの保存先になる `task_history` が DB にあることと、その列を確認する。
 
 #### 実行
 
+`go-kanban/` で実行する。
+
 ```bash
-docker compose exec -T db psql -U kanban -d kanban -c \
-  'SELECT task_id, user_id, action, old_value, new_value FROM task_history ORDER BY id;'
+docker compose exec -T db psql -U kanban -d kanban -c '\d task_history'
 ```
 
 #### 期待結果
@@ -485,14 +639,250 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 検証環境では、次の結果になった。
 
 ```text
- task_id | user_id |     action     | old_value | new_value
----------+---------+----------------+-----------+-----------
-       1 |       1 | status_changed | todo      | doing
-       1 |       1 | status_changed | doing     | done
+                                       Table "public.task_history"
+   Column   |           Type           | Collation | Nullable |                 Default
+------------+--------------------------+-----------+----------+------------------------------------------
+ id         | bigint                   |           | not null | nextval('task_history_id_seq'::regclass)
+ task_id    | bigint                   |           | not null |
+ user_id    | bigint                   |           |          |
+ action     | text                     |           | not null |
+ old_value  | text                     |           | not null | ''::text
+ new_value  | text                     |           | not null | ''::text
+ created_at | timestamp with time zone |           | not null | now()
+Indexes:
+    "task_history_pkey" PRIMARY KEY, btree (id)
+    "idx_task_history_task_id" btree (task_id)
+Foreign-key constraints:
+    "task_history_task_id_fkey" FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    "task_history_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+```
+
+`Check constraints:` に `reject_done` が表示された場合は、[Chapter 06](./chapter06_transaction.md) の Rollback 確認で追加した制約が残っている。このままでは `done` への変更が 500 になるので、先に外しておく。
+
+```bash
+docker compose exec -T db psql -U kanban -d kanban -c \
+  'ALTER TABLE task_history DROP CONSTRAINT reject_done;'
+```
+
+> **NOTE**
+> `Did not find any relation named "task_history".` と表示された場合は、`migrations/003_history.sql` が適用されていない。[Chapter 06](./chapter06_transaction.md) の Migration 手順を実行してから進む。
+
+#### 各列の意味
+
+| 列 | 監査ログとしての意味 |
+| --- | --- |
+| `user_id` | 誰が（ユーザー削除後も履歴を残すため `ON DELETE SET NULL`） |
+| `created_at` | いつ（DB サーバーの時刻。`TIMESTAMPTZ` なので UTC で保存される） |
+| `task_id` | 何を |
+| `action` | どんな操作（現状は `status_changed` のみ） |
+| `old_value` / `new_value` | 何から何へ |
+
+履歴は `internal/repository/task.go` の `UpdateStatusWithHistory` が、Task の UPDATE と同じ Transaction で INSERT する。実装は [Chapter 06](./chapter06_transaction.md) で作ったものをそのまま使い、この章では変更しない。
+
+---
+
+### Step 9. Status を変更して監査ログを残す
+
+#### やること
+
+Status を 3 回変更し、成功した変更だけが履歴に残ることを確かめる。2 回目はわざと古い `version` を送り、409 Conflict にする。
+
+#### 実行
+
+サーバーは Step 7 と同じく、`go-kanban/` でログをファイルに書き出す形で起動しておく。Step 11 で `logs/server.log` を検索する。
+
+```bash
+mkdir -p logs
+DEBUG_ROUTES=1 go run ./cmd/api > logs/server.log 2>&1
+```
+
+別のターミナルで、同じく `go-kanban/` から実行する。Step 6 の `TASK_ID` は使わず、履歴が空の Task を新しく作る。既存の Task だと、過去の章で残した履歴が混ざって結果を読みにくくなる。
+
+```bash
+# Session が切れていたら取り直す
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"alice-password-1"}'    # → 204
+
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+  -H 'Content-Type: application/json' -d '{"name":"Chapter08 Audit"}' \
+  | sed -E 's/^\{"id":([0-9]+).*/\1/')
+AUDIT_TASK_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+  -H 'Content-Type: application/json' -d '{"title":"audit me","priority":"low"}' \
+  | sed -E 's/^\{"id":([0-9]+).*/\1/')
+echo "AUDIT_TASK_ID=$AUDIT_TASK_ID"
+```
+
+`AUDIT_TASK_ID=` の後ろに数字だけが表示されれば成功。
+
+続けて Status を変更する。Step 11 でログと突き合わせるため、`X-Request-Id` に分かりやすい ID を付けて送る。
+
+```bash
+# 1. todo → doing（version 1 は作成直後の値）
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$AUDIT_TASK_ID/status \
+  -H 'Content-Type: application/json' -H 'X-Request-Id: audit-1' \
+  -d '{"status":"doing","version":1}'
+
+# 2. 古い version のまま doing → done（競合させる）
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$AUDIT_TASK_ID/status \
+  -H 'Content-Type: application/json' -H 'X-Request-Id: audit-2' \
+  -d '{"status":"done","version":1}'
+
+# 3. 正しい version で doing → done
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$AUDIT_TASK_ID/status \
+  -H 'Content-Type: application/json' -H 'X-Request-Id: audit-3' \
+  -d '{"status":"done","version":2}'
+```
+
+#### 期待結果
+
+| # | 送った内容 | Status | Body |
+| --- | --- | --- | --- |
+| 1 | `doing`, `version:1` | 200 | `{"id":260,...,"status":"doing","version":2,...}` |
+| 2 | `done`, `version:1` | 409 | `{"error":{"code":"conflict","message":"task was updated by another request; reload and retry"}}` |
+| 3 | `done`, `version:2` | 200 | `{"id":260,...,"status":"done","version":3,...}` |
+
+`id` の値は環境によって変わる。
+
+> **NOTE**
+> 1 回目から 409 になる場合は、`AUDIT_TASK_ID` が空か、作成済みの別の Task を指している。`echo $AUDIT_TASK_ID` で値を確認し、Task の作成からやり直す。
+>
+> 3 回目が 500 になる場合は、`reject_done` 制約が残っている。[Step 8](#step-8-task_history-の構造を確認する) の手順で外す。
+
+---
+
+### Step 10. 監査ログを検索する
+
+#### やること
+
+`task_history` を 2 つの切り口で検索する。「この Task に何が起きたか」と「このユーザーが何をしたか」。
+
+#### 実行
+
+以降の SQL は、Step 9 で設定したシェル変数 `AUDIT_TASK_ID` を使う。シェル変数はターミナルごとに別なので、まず値が入っているかを確認する。
+
+```bash
+echo "AUDIT_TASK_ID=$AUDIT_TASK_ID"
+```
+
+`=` の後ろが空の場合は、Step 9 と別のターミナルで実行しているか、ターミナルを開き直している。`go-kanban/` で、Step 9 で作った Task の ID を DB から取り直す。
+
+```bash
+AUDIT_TASK_ID=$(docker compose exec -T db psql -U kanban -d kanban -tAc \
+  "SELECT max(id) FROM tasks WHERE title = 'audit me';")
+echo "AUDIT_TASK_ID=$AUDIT_TASK_ID"
+```
+
+`-tAc` は、見出しや罫線を付けずに値だけを出力するオプション。Step 9 を複数回やり直した場合は、最後に作った Task の ID が入る。
+
+Task 単位で見る。`created_at` は UTC で保存されているので、通常ログ（`+09:00`）と比べやすいよう日本時間に変換して表示する。
+
+```bash
+docker compose exec -T db psql -U kanban -d kanban -c \
+  "SELECT h.id, h.task_id, u.email, h.old_value, h.new_value,
+          to_char(h.created_at AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM-DD HH24:MI:SS.MS') AS changed_at_jst
+   FROM task_history h LEFT JOIN users u ON u.id = h.user_id
+   WHERE h.task_id = $AUDIT_TASK_ID ORDER BY h.id;"
+```
+
+ユーザー単位で見る。alice（`user_id=1`）の直近 5 件を新しい順に出す。
+
+```bash
+docker compose exec -T db psql -U kanban -d kanban -c \
+  "SELECT h.created_at, u.email, h.task_id, h.old_value, h.new_value
+   FROM task_history h LEFT JOIN users u ON u.id = h.user_id
+   WHERE h.user_id = 1 ORDER BY h.id DESC LIMIT 5;"
+```
+
+#### 期待結果
+
+検証環境では、Task 単位の検索が次の結果になった。
+
+```text
+ id | task_id |       email       | old_value | new_value |     changed_at_jst
+----+---------+-------------------+-----------+-----------+-------------------------
+  9 |     260 | alice@example.com | todo      | doing     | 2026-09-30 19:38:23.806
+ 10 |     260 | alice@example.com | doing     | done      | 2026-09-30 19:38:23.885
 (2 rows)
 ```
 
-#### なぜ DB に保存するのか
+Step 9 で送った 3 回のうち、履歴は 2 行だけになる。409 になった 2 回目は UPDATE が 0 件で終わり、INSERT まで進まずに Rollback されるため、履歴に残らない。
+
+ユーザー単位の検索では、先頭 2 行に上と同じ変更が並び、その後に過去の章で行った変更が続く。
+
+```text
+          created_at           |       email       | task_id | old_value | new_value
+-------------------------------+-------------------+---------+-----------+-----------
+ 2026-09-30 10:38:23.885697+00 | alice@example.com |     260 | doing     | done
+ 2026-09-30 10:38:23.80655+00  | alice@example.com |     260 | todo      | doing
+ 2026-09-29 13:25:07.863663+00 | alice@example.com |      14 | todo      | doing
+ ...
+```
+
+こちらは `created_at` を変換していないので、UTC（`+00`）で表示される。3 行目以降の内容は、それまでに行った操作によって変わる。
+
+> **NOTE**
+> `ERROR:  syntax error at or near "ORDER"` と表示され、`WHERE h.task_id =  ORDER BY` のように `=` の後ろが空になっている場合は、`AUDIT_TASK_ID` が空のまま実行している。この Step 冒頭の手順で ID を取り直す。
+
+#### 失敗した操作をどう扱うか
+
+| 操作 | 通常ログ | 監査ログ（`task_history`） |
+| --- | --- | --- |
+| 変更に成功（200） | 残る | 残る |
+| 競合で失敗（409） | 残る | 残らない |
+| 権限不足（403 / 404） | 残る | 残らない |
+
+本実装の監査ログは「実際に起きた変更」だけを記録する。「誰かが変更しようとして拒否された」ことを追うときは、通常ログの `status` と `user_id` で探す。拒否された操作も監査対象にする要件がある場合は、Transaction の外で別テーブルに記録する設計が必要になる。
+
+---
+
+### Step 11. 通常ログと突き合わせる
+
+#### やること
+
+Step 10 で見つけた変更について、それを行った Request の通常ログを探す。
+
+#### 実行
+
+`go-kanban/` で、Step 9 の Request のログを抜き出す。
+
+```bash
+grep '"method":"PATCH"' logs/server.log | grep "/tasks/$AUDIT_TASK_ID/status"
+```
+
+#### 期待結果
+
+検証環境では、次のログが出た。
+
+```json
+{"time":"2026-09-30T19:38:23.8106922+09:00","level":"INFO","msg":"http_request","request_id":"audit-1","method":"PATCH","path":"/tasks/260/status","status":200,"duration_ms":7,"bytes":128,"user_id":1}
+{"time":"2026-09-30T19:38:23.8479508+09:00","level":"INFO","msg":"http_request","request_id":"audit-2","method":"PATCH","path":"/tasks/260/status","status":409,"duration_ms":0,"bytes":96,"user_id":1}
+{"time":"2026-09-30T19:38:23.8879445+09:00","level":"INFO","msg":"http_request","request_id":"audit-3","method":"PATCH","path":"/tasks/260/status","status":200,"duration_ms":4,"bytes":127,"user_id":1}
+```
+
+Step 10 の結果と並べると、次のように対応する。
+
+| 監査ログ | 通常ログ | 対応の根拠 |
+| --- | --- | --- |
+| `todo → doing`（19:38:23.806） | `audit-1`（19:38:23.810, 200） | 同じ Task、同じ `user_id`、直後の時刻 |
+| なし | `audit-2`（19:38:23.847, 409） | 失敗したので監査ログには無い |
+| `doing → done`（19:38:23.885） | `audit-3`（19:38:23.887, 200） | 同じ Task、同じ `user_id`、直後の時刻 |
+
+通常ログの `time` が監査ログの `created_at` より数 ms 遅いのは、通常ログが Response を返す直前に書かれるため。
+
+> **NOTE**
+> `grep` で何も表示されない場合は、サーバーを標準出力のまま起動している。Step 9 の冒頭の `> logs/server.log 2>&1` 付きで起動し直し、Step 9 からやり直す。
+>
+> 時刻が 9 時間ずれて見える場合は、`AT TIME ZONE 'Asia/Tokyo'` を付けずに `created_at` を表示している。`2026-09-30 10:38:23+00` と `2026-09-30T19:38:23+09:00` は同じ時刻を指す。
+
+#### いまの設計の限界
+
+今回は Task ID・`user_id`・時刻の 3 つで対応を推測した。同じユーザーが同じ Task を短い間隔で何度も更新すると、どの Request がどの変更かを時刻だけで決めるのは難しくなる。
+
+`task_history` に `request_id` 列を持たせると、この突き合わせが 1 回の検索で確定する。本ハンズオンでは実装しないが、次の「監査ログに記録する項目」で未実装の項目として挙げている。
+
+---
+
+### 監査ログを DB に保存する理由
 
 | | 通常ログ（標準出力） | 監査ログ（DB） |
 | --- | --- | --- |
@@ -503,7 +893,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 
 Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task の更新も Rollback される。アプリ経由で更新する限り、「更新されたのに履歴がない」状態は起きない。
 
-#### 監査ログに記録する項目
+### 監査ログに記録する項目
 
 | 項目 | 本実装 | 一般的な要件 |
 | --- | --- | --- |
@@ -514,7 +904,7 @@ Chapter 06 で確認したとおり、履歴の INSERT が失敗すれば Task �
 | 変更前 | `old_value` | ○ |
 | 変更後 | `new_value` | ○ |
 | どこから | 未実装 | IP アドレス、User-Agent が求められることがある |
-| どの Request で | 未実装 | `request_id` を入れると、その変更を行った Request の通常ログまで辿れる |
+| どの Request で | 未実装 | `request_id` を入れると、Step 11 の突き合わせが推測なしで済む |
 
 通常ログと監査ログが同じ ID で繋がるようにしておくと、調査が一気に楽になる。
 

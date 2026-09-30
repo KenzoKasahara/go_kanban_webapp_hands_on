@@ -36,6 +36,41 @@ func CurrentUser(ctx context.Context) (model.User, bool) {
 	return user, ok
 }
 
+const requestIDContextKey contextKey = "request_id"
+
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDContextKey, id)
+}
+
+// RequestIDFrom は RequestID middleware が載せた ID を取り出す。
+// middleware を通っていない場合は空文字を返す。
+func RequestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDContextKey).(string)
+	return id
+}
+
+// LogFields は1Requestの間だけ共有される、書き換え可能なログ情報。
+//
+// context.WithValue は「新しいContext」を作る。内側のmiddlewareが
+// 値を足しても、外側が持っているContextは変わらない。
+// AccessLog(外側) が RequireAuth(内側) の決めた user_id を出すには、
+// 外側で入れ物を作り、内側がその中身を書き換える必要がある。
+type LogFields struct {
+	UserID int64
+}
+
+const logFieldsContextKey contextKey = "log_fields"
+
+func WithLogFields(ctx context.Context) (context.Context, *LogFields) {
+	fields := &LogFields{}
+	return context.WithValue(ctx, logFieldsContextKey, fields), fields
+}
+
+func LogFieldsFrom(ctx context.Context) (*LogFields, bool) {
+	fields, ok := ctx.Value(logFieldsContextKey).(*LogFields)
+	return fields, ok
+}
+
 // --- Request -----------------------------------------------------------
 
 // DecodeJSON は未知のfieldを拒否する。
@@ -117,6 +152,9 @@ func RespondError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, model.ErrConflict):
 		writeErrorBody(w, http.StatusConflict, "conflict",
 			publicMessage(err, "resource was updated by another request"))
+	case errors.Is(err, context.DeadlineExceeded):
+		// 処理は打ち切ったが、利用者から見れば「今は使えない」状態。
+		writeErrorBody(w, http.StatusServiceUnavailable, "timeout", "request timed out")
 	default:
 		slog.ErrorContext(r.Context(), "unexpected error", slog.String("error", err.Error()))
 		writeErrorBody(w, http.StatusInternalServerError, "internal_error", "internal server error")

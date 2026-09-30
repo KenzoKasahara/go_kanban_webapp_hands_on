@@ -118,5 +118,17 @@ func (s *TaskService) ChangeStatus(
 		return model.Task{}, err
 	}
 
+	// 通知の失敗で Task 更新を失敗にしない。
+	// DBは既に Commit 済みで、ここで error を返すと利用者は
+	// 「失敗した」と判断して再送し、二重処理の原因になる。
+	if s.notifier != nil {
+		if err := s.notifier.TaskStatusChanged(ctx, updated, current.Status); err != nil {
+			s.logger.WarnContext(ctx, "notification failed",
+				slog.Int64("task_id", updated.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
 	return updated, nil
 }

@@ -789,8 +789,9 @@ export default function (data) {
 API サーバ（`go run ./cmd/api`）と DB を起動した状態で、k6 を Docker で実行する。サーバログはあとで集計に使うので、ファイルへ保存しておく。
 
 ```bash
-# 別ターミナルで API を起動（ログを server.log に残す）
-go run ./cmd/api > server.log 2>&1
+# 別ターミナルで API を起動（ログを logs/server.log に残す）
+mkdir -p logs
+go run ./cmd/api > logs/server.log 2>&1
 
 # k6 を実行（スクリプトは標準入力から渡す）
 docker run --rm -i \
@@ -915,7 +916,7 @@ docker compose exec db psql -U kanban -d kanban -c \
   "SELECT count(*), state FROM pg_stat_activity WHERE datname='kanban' GROUP BY state;"
 
 # アクセスログから遅いリクエストを抽出する
-grep http_request server.log | grep -E '"duration_ms":[0-9]{3,}'
+grep http_request logs/server.log | grep -E '"duration_ms":[0-9]{3,}'
 ```
 
 Chapter 08 で入れた `duration_ms` が、ここで使える。

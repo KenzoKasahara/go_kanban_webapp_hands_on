@@ -26,6 +26,11 @@ func RequireAuth(auth *service.AuthService, next http.Handler) http.Handler {
 			return
 		}
 
+		// アクセスログへ user_id を載せる。
+		if fields, ok := httpx.LogFieldsFrom(r.Context()); ok {
+			fields.UserID = user.ID
+		}
+
 		next.ServeHTTP(w, r.WithContext(httpx.WithUser(r.Context(), user)))
 	})
 }
