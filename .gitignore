@@ -32,3 +32,7 @@ go.work.sum
 # .vscode/
 
 docs/原本/
+
+# Logs (keep the directory itself)
+go-kanban/logs/*
+!go-kanban/logs/.gitkeep
