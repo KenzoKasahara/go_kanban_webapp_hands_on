@@ -43,7 +43,7 @@ import パスは Chapter 01 の `go mod init example.com/go-kanban` に合わせ
 書くファイルと、Chapter 04 のどのコードを移したものかの対応は次のとおり。
 
 | Step | 書くファイル | 移し元（Chapter 04） |
-|---|---|---|
+| --- | --- | --- |
 | 2 | `internal/model/errors.go` | `errors.go` の `ErrNotFound` などと `ValidationError` |
 | 2 | `internal/model/task.go` | `main.go` の `Task`、`validate.go` |
 | 2 | `internal/model/member.go` | `authz.go` の Role 定数と判定関数 |
@@ -2307,7 +2307,7 @@ func (r *PgTaskRepository) Search(
 Part 2・Part 3 の比較に使う検証用コードを書き、`DEBUG_ROUTES=1` のときだけ登録する。
 
 | エンドポイント | 呼び出す実装 | 使う場所 |
-|---|---|---|
+| --- | --- | --- |
 | `GET /debug/unsafe-search/{id}?q=...` | `SearchUnsafe`（文字列連結） | Step 9 |
 | `GET /debug/nplus1/{id}` | `ListWithAssigneeNaive` と `ListWithAssigneeJoin` | Step 10 |
 
@@ -2811,7 +2811,7 @@ WHERE project_id = 1 AND title ILIKE '%%' OR project_id > 0 --%' ORDER BY id
 ### 対策の原則
 
 | やること | 理由 |
-|---|---|
+| --- | --- |
 | 値は必ずプレースホルダ（`$1`）で渡す | SQL 文と値が別経路で送られる |
 | 「この入力は安全だから」で例外を作らない | 安全性の判断は将来の変更で崩れる |
 | エスケープ関数を自作しない | 網羅漏れが必ず出る |
@@ -2979,7 +2979,7 @@ for i in 1 2 3; do curl -s -b ./cookie/alice.txt localhost:8980/debug/nplus1/$AL
 ```
 
 | 実装 | Query 数 | 所要時間 | 返す結果 |
-|---|---:|---:|---|
+| --- | ---: | ---: | --- |
 | N+1（ループ内 Query） | 201 | 64〜70 ms | 同じ |
 | JOIN（1 Query） | 1 | 0〜1 ms | 同じ |
 
@@ -3011,7 +3011,7 @@ flowchart LR
 ### JOIN が常に正解ではない
 
 | 状況 | 適した手法 |
-|---|---|
+| --- | --- |
 | 1対1、または 1対少数の関連 | JOIN |
 | 1対多で、親の列が大量に複製される | 2 Query に分けて、アプリ側で組み立てる |
 | 関連先の種類が多く JOIN が複雑になる | `WHERE id = ANY($1)` によるバッチ取得 |
@@ -3032,7 +3032,7 @@ Query 数・転送データ量・可読性の3つを比較して判断する。
 N+1 はコードを読むだけでは気づきにくい。ループの中の関数呼び出しが、数階層下で Query を発行していることがある。
 
 | 方法 | やり方 |
-|---|---|
+| --- | --- |
 | Query 数を数える | 今回のように計測用の仕組みを入れる。pgx なら `Tracer` を使える |
 | PostgreSQL 側で数える | `pg_stat_statements` 拡張で `calls` を見る |
 | スロー Query ログ | 個々の Query は速いので引っかからない。N+1 の発見には向かない |

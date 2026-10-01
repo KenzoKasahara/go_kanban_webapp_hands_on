@@ -38,7 +38,7 @@ flowchart TD
 ```
 
 | | Authentication | Authorization |
-|---|---|---|
+| --- | --- | --- |
 | 問い | あなたは誰？ | その人はこの操作をしてよい？ |
 | 失敗時 | 401 | 403 |
 | 実装場所 | Middleware（全 Request 共通） | 各操作の直前（操作ごとに条件が違う） |
@@ -114,7 +114,7 @@ CREATE INDEX
 <summary>スキーマの設計判断</summary>
 
 | 決定 | 理由 |
-|---|---|
+| --- | --- |
 | `users.email` に `UNIQUE` | 重複登録を DB レベルで防ぐ。アプリ側のチェックだけでは同時登録で抜ける |
 | `sessions.id` が `TEXT PRIMARY KEY` | ランダム文字列をそのまま主キーにする。連番だと次の値を推測できてしまう |
 | `sessions.expires_at` | 期限切れ Session を SQL の `WHERE` で弾ける |
@@ -409,7 +409,7 @@ Session ID の生成には `crypto/rand` を使う。`math/rand` は擬似乱数
 Cookie には次の属性を付けている。
 
 | 属性 | 効果 |
-|---|---|
+| --- | --- |
 | `HttpOnly` | JavaScript から Cookie を読めなくする。XSS があっても Session を盗まれにくくする |
 | `SameSite=Lax` | 他サイトからの遷移で Cookie が自動送信されるのを抑える。CSRF 対策の一部 |
 | `Secure` | HTTPS でのみ Cookie を送る。ローカルは HTTP なので `false`、本番では `true` にする |
@@ -418,7 +418,7 @@ Cookie には次の属性を付けている。
 <summary>DECISION: なぜ JWT ではなく Session なのか</summary>
 
 | | Session（採用） | JWT |
-|---|---|---|
+| --- | --- | --- |
 | 状態の保持 | サーバ側（DB） | クライアント側（トークン内） |
 | ログアウト | DB から削除すれば即無効 | 有効期限まで無効化できない（別途ブロックリストが必要） |
 | 権限変更の反映 | 次の Request から反映 | トークン再発行まで古い権限のまま |
@@ -440,7 +440,7 @@ Project のメンバーシップと Role を確認する仕組みを作る。
 ### Role の設計
 
 | Role | Task 閲覧 | Task 作成・更新 | Member 追加 |
-|---|:---:|:---:|:---:|
+| --- | :---: | :---: | :---: |
 | Viewer | ○ | × | × |
 | Member | ○ | ○ | × |
 | Owner | ○ | ○ | ○ |
@@ -628,7 +628,7 @@ WHERE t.id = $1 AND pm.user_id = $2;
 この Step の変更はすべて `cmd/api/main.go` に対して行う。既存の Handler は置き換え、Member 追加の Handler は新しく足す。
 
 | 対象 | 操作 |
-|---|---|
+| --- | --- |
 | `createTaskHandler` | 先頭に認証・認可を追加 |
 | `getTaskHandler` | 丸ごと置き換え |
 | `listTasksHandler` | 先頭に認証・認可を追加 |
@@ -950,7 +950,7 @@ curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8980/projects/$PROJE
 ```
 
 | オプション | 意味 |
-|---|---|
+| --- | --- |
 | `-s` | 進捗表示を消す。変数へ入れるときに余計な出力が混ざらない |
 | `-w '\n%{http_code}\n'` | Body の後に改行し、Status Code を出力する |
 | `-c ファイル` | レスポンスの Cookie をファイルへ保存する |
@@ -970,7 +970,7 @@ Project と Task の ID は固定の値にしない。Chapter 03 までに作っ
 検証環境での実際の出力。空の DB から始めたため、ID はすべて 1 になっている。既存データがある環境では、`id` と `project_id` の値が変わる。
 
 | # | 操作 | Status | Response |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | alice 登録 | 201 | `{"id":1,"email":"alice@example.com"}` |
 | 2 | 同じメールで再登録 | 409 | `{"error":{"code":"conflict","message":"email is already registered"}}` |
 | 3 | 12文字未満のパスワード | 400 | `{"error":{"code":"invalid_request","message":"password must be 12 characters or more"}}` |
@@ -1190,7 +1190,7 @@ bash scripts/chapter04_check.sh
 各項目の Status Code を期待値と照合し、`PASS` / `FAIL` を出力する。5 と 6 のレスポンスが同じかどうかも確認する。すべて通れば最後に `failed: 0` と表示される。
 
 | 手動の手順との違い | 理由 |
-|---|---|
+| --- | --- |
 | メールアドレスに実行時刻の接尾辞を付ける | 同じメールだと2回目以降の登録が 409 になり、何度も実行できない |
 | Response の中身は照合しない | ID が実行ごとに変わるため。確認するのは Status Code だけ |
 | Cookie は一時ディレクトリに保存し、終了時に消す | 手動で作った `./cookie/alice.txt` / `./cookie/bob.txt` を上書きしない |
@@ -1227,7 +1227,7 @@ sequenceDiagram
 ## この章で塞いだ穴
 
 | 導入したもの | 防いだ問題 |
-|---|---|
+| --- | --- |
 | bcrypt によるパスワードハッシュ | パスワードの平文保存 |
 | `crypto/rand` による Session ID | Session ID の推測 |
 | 401 の文言統一 | 登録済みメールアドレスの列挙 |
@@ -1242,7 +1242,7 @@ sequenceDiagram
 <summary>この章で扱わなかったセキュリティ項目</summary>
 
 | 項目 | 状況 |
-|---|---|
+| --- | --- |
 | CSRF トークン | `SameSite=Lax` のみで対応。Cookie 認証を本番で使うなら、要件に応じてトークン方式の併用を検討する |
 | レートリミット | 未実装。ログイン試行の回数制限は本番では必須 |
 | パスワードリセット | 未実装 |

@@ -161,7 +161,7 @@ CREATE INDEX
 <summary>この時点のスキーマ設計で決めていること</summary>
 
 | 決定 | 理由 |
-|---|---|
+| --- | --- |
 | `project_id` に `REFERENCES ... ON DELETE CASCADE` | Project が消えたら Task も消す。孤児レコードを作らない |
 | `version INTEGER NOT NULL DEFAULT 1` | Chapter 06 の楽観ロックで使う。後から列を足すと既存行の扱いに困るので最初から入れる |
 | `description` は `NOT NULL DEFAULT ''` | NULL と空文字の両方が存在する状態を避ける。判定が1つ減る |
@@ -431,7 +431,7 @@ go run ./cmd/api
 ```
 
 | コマンド | 役割 |
-|---|---|
+| --- | --- |
 | `go mod tidy` | `import` と `go.mod` / `go.sum` を突き合わせ、足りない依存を追加し、使っていない依存を削除する |
 | `go vet ./...` | コンパイルは通るがバグの可能性が高い書き方（フォーマット指定と引数の型の不一致など）を検出する。何も出なければ問題なし |
 | `go run ./cmd/api` | `cmd/api` をビルドしてそのまま起動する。実行ファイルは残らない。サーバは `Ctrl + C` で停止する |
@@ -445,7 +445,7 @@ go run ./cmd/api
 ### なぜこの書き方をするのか（あえて）
 
 | 雑な点 | 本来どうすべきか | 直す章 |
-|---|---|---|
+| --- | --- | --- |
 | Handler が直接 SQL を実行している | Repository へ分離する | Chapter 05 |
 | Validation が `priority` の既定値設定だけ | 必須・長さ・値域を検証する | Chapter 03 |
 | `http.Error(w, err.Error(), 500)` で error をそのまま返す | 分類して安全な文言に変換する | Chapter 03 |
@@ -520,7 +520,7 @@ func main() {
 #### Python との違い
 
 | | Python | Go |
-|---|---|---|
+| --- | --- | --- |
 | 関数に渡されるもの | オブジェクトへの参照 | 値のコピー |
 | 関数の中で書き換えたとき | list・dict などは呼び出し元に反映される | 構造体・数値・文字列は反映されない |
 | 呼び出し元に反映させる方法 | そのまま渡す | `&` で場所を渡す |
@@ -532,7 +532,7 @@ Python の感覚で「渡せば中身を埋めてもらえる」と考えると�
 「変数には必ず `&` を付ける」わけではない。関数に書き込んでほしいときに付ける。
 
 | 書き方 | `&` | 理由 |
-|---|---|---|
+| --- | --- | --- |
 | `Decode(&input)` | 付ける | JSON の値を `input` に書き込んでもらう |
 | `Scan(&project.ID, &project.Name)` | 付ける | DB から読んだ値を各フィールドに書き込んでもらう |
 | `writeJSON(w, http.StatusCreated, project)` | 付けない | `project` を読んで JSON にするだけ |
@@ -680,7 +680,7 @@ flowchart TD
 ```
 
 | 観測した事象 | 根本原因 | 対応する章 |
-|---|---|---|
+| --- | --- | --- |
 | 空 title が 201 で保存される | 入力検証がない | Chapter 03 |
 | typo したフィールドが無視される | JSON Decode が未知フィールドを許している | Chapter 03 |
 | 存在しない Task が 500 | `pgx.ErrNoRows` を業務上の意味へ翻訳していない | Chapter 03 |

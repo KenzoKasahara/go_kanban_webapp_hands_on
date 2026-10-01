@@ -7,7 +7,7 @@ Go の標準ライブラリ `net/http` と PostgreSQL で、複数ユーザー�
 ## Overview
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 目的 | 「動く CRUD」と「本番で運用できる CRUD」の差分を、実機で再現しながら埋める |
 | 学習・検証する内容 | HTTP / Validation / 認証・認可 / SQL / Transaction / goroutine と Data Race / 同時更新 / Timeout / Retry / 冪等性 / Logging / Test |
 | 想定読者 | Go と Web アプリ開発の初心者〜初級者 |
@@ -33,7 +33,7 @@ flowchart LR
 層を分けること自体が目的ではない。**変更理由が異なるコードを分離する**ことが目的になる。
 
 | 何が変わったとき | どの層を直すか |
-|---|---|
+| --- | --- |
 | HTTP の仕様（URL、Status、JSON 形式） | Handler |
 | 業務ルール（誰が何をしてよいか、どの状態遷移を許すか） | Service |
 | DB スキーマ、SQL の書き方 | Repository |
@@ -81,7 +81,7 @@ flowchart LR
 ## Chapters
 
 | 章 | 達成すること | 主に扱う問題 |
-|---|---|---|
+| --- | --- | --- |
 | [Chapter 00: 準備と前提知識](./chapter00_setup.md) | 環境を用意し、Go の最小知識とドメインモデルを把握する | — |
 | [Chapter 01: Go と HTTP の基礎](./chapter01_http.md) | HTTP Request が Handler に届き Response になる流れを説明できる | Request/Response の流れが分からない |
 | [Chapter 02: 雑な CRUD を作る](./chapter02_crud.md) | PostgreSQL に繋いだ Task CRUD を動かし、**あえて雑な実装の問題を観測する** | 空の title が保存される、存在しない ID で 500 |
@@ -98,7 +98,7 @@ flowchart LR
 ## 技術選定と理由
 
 | 技術 | 役割 | 今回採用した理由 |
-|---|---|---|
+| --- | --- | --- |
 | Go 1.25+ | Backend | HTTP・Context・Error 処理がコードに明示的に現れる |
 | `net/http` | HTTP Server | Framework に隠れる処理を最初に理解する |
 | PostgreSQL 17 | RDB | Transaction・Lock・Constraint を実機で確認できる |
@@ -114,7 +114,7 @@ flowchart LR
 最初から便利なライブラリを全部入れない。「何が面倒なのか」を経験した後で導入すると、そのライブラリが何を解決しているのか分かる。
 
 | ライブラリ | 導入を検討する段階 |
-|---|---|
+| --- | --- |
 | `chi` / `echo` | Routing が複雑になり、`net/http` の `ServeMux` では表現しづらくなったとき |
 | `go-playground/validator` | Validation の記述量が増え、タグで宣言したほうが見通しが良くなったとき |
 | `sqlc` / `sqlx` | SQL と Go 型の対応付けが増え、`Scan` の書き間違いが起きやすくなったとき |
@@ -125,7 +125,7 @@ flowchart LR
 ## 設計判断
 
 | 判断 | 選択肢 | 採用 | 理由 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | HTTP | Framework / `net/http` | `net/http` から開始 | HTTP の基礎を隠さない |
 | DB | PostgreSQL / SQLite | PostgreSQL | Transaction・Lock を検証しやすい |
 | DB アクセス | ORM / pgx | pgx | 発行 SQL を直接観察する |
@@ -204,7 +204,7 @@ go-kanban/
 本ドキュメントの手順と出力例は、次の環境で実際に実行して確認した。
 
 | 項目 | バージョン |
-|---|---|
+| --- | --- |
 | OS | Windows 11 Pro（Git Bash 上で実行） |
 | Go | 1.27.1 |
 | PostgreSQL | 17（`postgres:17` イメージ） |

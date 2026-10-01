@@ -50,7 +50,7 @@ curl 8.18.0 (x86_64-w64-mingw32) libcurl/8.18.0 ...
 必要なバージョンの目安。
 
 | ツール | 必要バージョン | 使う章 |
-|---|---|---|
+| --- | --- | --- |
 | Go | 1.25 以降 | 全章（`ServeMux` のメソッドルーティングに 1.22 以降が必須） |
 | Docker / Compose | 現行安定版 | Chapter 02 以降 |
 | curl | 任意 | Chapter 01 以降 |
@@ -345,7 +345,7 @@ erDiagram
 最初から全 Entity を扱うと、「HTTP」「SQL」「認証」「関連テーブル」を同時に理解する必要があり、問題の原因を切り分けられない。次の順番で増やす。
 
 | 章 | 追加する Entity |
-|---|---|
+| --- | --- |
 | Chapter 02 | `projects`、`tasks` |
 | Chapter 04 | `users`、`sessions`、`project_members`、`tasks.assignee_id` |
 | Chapter 06 | `task_history` |
@@ -390,7 +390,7 @@ PATCH  /tasks/{id}/status          Status 変更（楽観ロック）
 ### HTTP Status の使い分け
 
 | 状況 | Status | このハンズオンでの例 |
-|---|---|---|
+| --- | --- | --- |
 | 取得・更新成功 | 200 | `GET /tasks/1`、`PATCH /tasks/1/status` |
 | 作成成功 | 201 | `POST /projects/1/tasks` |
 | Body なしの成功 | 204 | `POST /logout`、`POST /login`（Chapter 05 以降） |

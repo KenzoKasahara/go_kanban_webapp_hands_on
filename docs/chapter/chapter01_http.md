@@ -183,7 +183,7 @@ var mux *http.ServeMux = http.NewServeMux()
 ```
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 型が決まるタイミング | コンパイル時。一度決まった型は変わらない |
 | 使える場所 | 関数の中だけ。関数の外では `var` を使う |
 | 既存の変数に代入するとき | `:=` ではなく `=` を使う |
@@ -193,7 +193,7 @@ var mux *http.ServeMux = http.NewServeMux()
 「`GET /health` が届いたら `healthHandler` を呼ぶ」という1行を対応表に追加する。この行を実行しても `healthHandler` は呼ばれない。
 
 | パターン | 呼ぶ関数 |
-|---|---|
+| --- | --- |
 | `GET /health` | `healthHandler` |
 
 #### `healthHandler` にカッコを付けない理由
@@ -220,7 +220,7 @@ func (mux *ServeMux) HandleFunc(pattern string, handler func(ResponseWriter, *Re
 ```
 
 | 部分 | 意味 | 呼び出し側で対応するもの |
-|---|---|---|
+| --- | --- | --- |
 | ① `(mux *ServeMux)` | レシーバ。`mux.HandleFunc(...)` とドットで呼べるのはこれがあるため。Java の `this`、Python の `self` にあたる | `mux` |
 | ③ `pattern string` | 反応するメソッドと Path | `"GET /health"` |
 | ④ `handler func(ResponseWriter, *Request)` | 「`ResponseWriter` と `*Request` を受け取り、何も返さない関数」なら何でも渡せる | `healthHandler` |
@@ -246,7 +246,7 @@ server := &http.Server{   // & ：作った構造体のポインタ（*http.Serv
 ```
 
 | フィールド | 値 | 意味 |
-|---|---|---|
+| --- | --- | --- |
 | `Addr` | `":8980"` | ホストを省略すると、このマシンのすべてのネットワークインターフェースの 8980 番ポートで待ち受ける |
 | `Handler` | `mux` | 届いた Request をすべて mux に渡す |
 | 書いていないフィールド | ゼロ値 | 数値は `0`、文字列は `""`、ポインタは `nil` になる |
@@ -301,7 +301,7 @@ pointer: 1
 ```
 
 | 記号 | 読み方 | 意味 |
-|---|---|---|
+| --- | --- | --- |
 | `&x` | x のアドレス | x が置いてある場所を取り出す |
 | `*T`（型の位置） | T へのポインタ型 | 「T の場所」を入れる型 |
 
@@ -316,7 +316,7 @@ pointer: 1
 #### `main.go` での使い分け
 
 | 箇所 | 型 | ポインタか | 理由 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `mux := http.NewServeMux()` | `*http.ServeMux` | ポインタ | 動機1・2 |
 | `server := &http.Server{...}` | `*http.Server` | ポインタ | 動機2 |
 | `r *http.Request` | `*http.Request` | ポインタ | 動機3 |
@@ -520,7 +520,7 @@ sequenceDiagram
 ## この章のまとめ
 
 | 学んだこと | 要点 |
-|---|---|
+| --- | --- |
 | `ServeMux` | URL とメソッドの対応表。一致しなければ 404 / 405 を自動で返す |
 | `w` と `r` | `w` は Client への出力先、`r` は届いた Request |
 | 書き込み順 | Header → WriteHeader → Body。逆順にすると無視される |

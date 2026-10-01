@@ -204,7 +204,7 @@ func isCheckViolation(err error) bool {
 <summary>GO NOTE: <code>errors.Is</code> と <code>errors.As</code> の使い分け</summary>
 
 | 関数 | 用途 | 例 |
-|---|---|---|
+| --- | --- | --- |
 | `errors.Is(err, ErrNotFound)` | 同一の値かを判定する。sentinel error 向け | 「これは NotFound か？」 |
 | `errors.As(err, &target)` | その型かを判定し、値を取り出す。情報を持つ error 向け | 「ValidationError なら、その Message を読みたい」 |
 
@@ -613,7 +613,7 @@ curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
 検証環境での実際の出力。
 
 | 入力 | Status | Response Body |
-|---|---|---|
+| --- | --- | --- |
 | `{"title":"","priority":"high"}` | 400 | `{"error":{"code":"invalid_request","message":"title is required"}}` |
 | `{"title":"   ","priority":"high"}` | 400 | `{"error":{"code":"invalid_request","message":"title is required"}}` |
 | `{"title":"ok","priority":"SUPER_HIGH"}` | 400 | `{"error":{"code":"invalid_request","message":"priority must be one of: low, medium, high"}}` |
@@ -667,7 +667,7 @@ Chapter 05 で `log/slog` に切り替えると、同じ内容が JSON 形式で
 この章で扱った検証項目と、今後扱うもの。
 
 | 項目 | この章 | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | 必須 | ○ | title |
 | 長さ | ○ | rune 数で判定 |
 | 値域 / enum | ○ | priority |
@@ -685,7 +685,7 @@ Chapter 05 で `log/slog` に切り替えると、同じ内容が JSON 形式で
 両方必要になる。役割が違う。
 
 | | Application Validation | DB Constraint |
-|---|---|---|
+| --- | --- | --- |
 | 目的 | 利用者へ理由を伝える | データの整合性を守る |
 | 返せるもの | 「title is required」 | SQLSTATE や制約名など、機械向けの情報 |
 | 守れる範囲 | この API を通った入力だけ | 直接 SQL を叩いた場合も含む |
@@ -698,7 +698,7 @@ Application 側だけだと、管理用スクリプトや別経路からの書�
 ## この章のまとめ
 
 | 導入したもの | 解決した問題 |
-|---|---|
+| --- | --- |
 | `ValidationError` + `Validate()` | 空 title / 範囲外 priority が保存される |
 | `DisallowUnknownFields()` | typo が黙って無視される |
 | sentinel error + `errors.Is` | 存在しない Task / Project が 500 になる |
