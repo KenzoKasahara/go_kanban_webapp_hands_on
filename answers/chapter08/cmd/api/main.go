@@ -52,10 +52,10 @@ func run(logger *slog.Logger) error {
 	// 通知 API の宛先。未設定なら通知しない。
 	cfg.NotifyURL = os.Getenv("NOTIFY_URL")
 	// Timeout の検証中だけ DEBUG_ROUTES=1 で起動する。
-	cfg.SlowQueryEnable = os.Getenv("DEBUG_ROUTES") == "1"
+	cfg.DebugRoutes = os.Getenv("DEBUG_ROUTES") == "1"
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8980",
 		Handler:           app.New(pool, logger, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

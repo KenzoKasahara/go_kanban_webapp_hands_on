@@ -28,6 +28,10 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 - [ ] Cookie / パスワード / Session ID がログに出ていないことを確認した
 - [ ] `task_history` から「誰がいつ何を変えたか」を追える
 
+## 完成時点のコード
+
+この章を終えた時点のコード全体は [answers/chapter08/](../../answers/chapter08/) にある。本文に抜粋しか載っていないファイルの全体を確認できる。
+
 ---
 
 ## Part 1. 構造化ログ
@@ -423,19 +427,19 @@ DEBUG_ROUTES=1 go run ./cmd/api
 ```bash
 # Session を取り直す（Chapter 04 と同じディレクトリで実行する）
 mkdir -p cookie
-curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'    # → 204
 ```
 
 読み取り対象の Task を alice の Project に作り、その ID を控える。Task の ID はそれまでに作ったデータの量で変わるので、`/tasks/1` のように決め打ちすると、他人の Task や存在しない Task を指して 404 になる。
 
 ```bash
-PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Chapter08 Board"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
 echo "PROJECT_ID=$PROJECT_ID"
 
-TASK_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+TASK_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"observe me","priority":"low"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
 echo "TASK_ID=$TASK_ID"
@@ -446,10 +450,10 @@ echo "TASK_ID=$TASK_ID"
 ログを確認するための Request を送る。`/debug/slow` は Timeout まで 2 秒かかるので、`&` でバックグラウンド実行し、その間に次の Request を送る。
 
 ```bash
-curl -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID
-curl localhost:8080/health
-curl -b ./cookie/alice.txt 'localhost:8080/debug/slow?seconds=3' &
-curl -H 'X-Request-Id: my-trace-123' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID
+curl -b ./cookie/alice.txt localhost:8980/tasks/$TASK_ID
+curl localhost:8980/health
+curl -b ./cookie/alice.txt 'localhost:8980/debug/slow?seconds=3' &
+curl -H 'X-Request-Id: my-trace-123' -b ./cookie/alice.txt localhost:8980/tasks/$TASK_ID
 ```
 
 4 つの Request は、それぞれ別のことを確認するために送る。ERROR ログ（503）を出すのは `/debug/slow` だけで、ほかの 3 つは 200 になる。
@@ -700,13 +704,13 @@ DEBUG_ROUTES=1 go run ./cmd/api > logs/server.log 2>&1
 
 ```bash
 # Session が切れていたら取り直す
-curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'    # → 204
 
-PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Chapter08 Audit"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
-AUDIT_TASK_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+AUDIT_TASK_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"audit me","priority":"low"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
 echo "AUDIT_TASK_ID=$AUDIT_TASK_ID"
@@ -718,17 +722,17 @@ echo "AUDIT_TASK_ID=$AUDIT_TASK_ID"
 
 ```bash
 # 1. todo → doing（version 1 は作成直後の値）
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$AUDIT_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$AUDIT_TASK_ID/status \
   -H 'Content-Type: application/json' -H 'X-Request-Id: audit-1' \
   -d '{"status":"doing","version":1}'
 
 # 2. 古い version のまま doing → done（競合させる）
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$AUDIT_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$AUDIT_TASK_ID/status \
   -H 'Content-Type: application/json' -H 'X-Request-Id: audit-2' \
   -d '{"status":"done","version":1}'
 
 # 3. 正しい version で doing → done
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$AUDIT_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$AUDIT_TASK_ID/status \
   -H 'Content-Type: application/json' -H 'X-Request-Id: audit-3' \
   -d '{"status":"done","version":2}'
 ```

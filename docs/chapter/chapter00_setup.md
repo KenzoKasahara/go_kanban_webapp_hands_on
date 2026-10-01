@@ -86,7 +86,7 @@ Windows 環境の場合のみ、curl で日本語を送るときの文字化け�
 
 ```bash
 # NG: シェルの引数として日本語を直接渡す
-curl -X POST localhost:8080/projects/1/tasks \
+curl -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' \
   -d '{"title":"認証APIを実装する"}'
 ```
@@ -107,7 +107,7 @@ cat > req.json <<'EOF'
 {"title":"認証APIを実装する","priority":"high"}
 EOF
 
-curl -X POST localhost:8080/projects/1/tasks \
+curl -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' \
   --data-binary @req.json
 ```

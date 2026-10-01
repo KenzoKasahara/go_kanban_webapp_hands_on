@@ -64,7 +64,7 @@ go test -tags=integration ./test/... -v
 go run ./cmd/api > server.log 2>&1
 
 docker run --rm -i \
-  -e BASE_URL=http://host.docker.internal:8080 \
+  -e BASE_URL=http://host.docker.internal:8980 \
   grafana/k6:2.3.0 run - < scripts/load-test.js
 ```
 

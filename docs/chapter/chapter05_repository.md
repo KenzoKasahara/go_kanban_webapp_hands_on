@@ -1938,7 +1938,7 @@ func run(logger *slog.Logger) error {
 	cfg.DebugRoutes = os.Getenv("DEBUG_ROUTES") == "1"
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8980",
 		Handler:           app.New(pool, logger, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -2012,7 +2012,7 @@ Chapter 04 までの API が同じように動くことを確認する。Chapter
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 SUFFIX=$(date +%s)
 ALICE="alice-$SUFFIX@example.com"
 BOB="bob-$SUFFIX@example.com"
@@ -2725,29 +2725,29 @@ alice と bob の Project を用意し、alice が bob の非公開 Task を読�
 
 ```bash
 # 準備: alice が自分の Project と、検索で当たる Task を作る
-ALICE_PROJECT=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+ALICE_PROJECT=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Alice Search"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
-curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects/$ALICE_PROJECT/tasks \
+curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects/$ALICE_PROJECT/tasks \
   -H 'Content-Type: application/json' -d '{"title":"write docs","priority":"high"}'
 
 # 準備: bob が非公開の Project と Task を作る
-BOB_PROJECT=$(curl -s -b ./cookie/bob.txt -X POST localhost:8080/projects \
+BOB_PROJECT=$(curl -s -b ./cookie/bob.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Bob Private"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
-curl -s -b ./cookie/bob.txt -X POST localhost:8080/projects/$BOB_PROJECT/tasks \
+curl -s -b ./cookie/bob.txt -X POST localhost:8980/projects/$BOB_PROJECT/tasks \
   -H 'Content-Type: application/json' -d '{"title":"bob salary negotiation","priority":"high"}'
 
 # alice が自分の Project を普通に検索
-curl -s -b ./cookie/alice.txt "localhost:8080/projects/$ALICE_PROJECT/tasks?q=docs"
+curl -s -b ./cookie/alice.txt "localhost:8980/projects/$ALICE_PROJECT/tasks?q=docs"
 
 # 攻撃文字列を、安全な実装へ投げる
 curl -s -b ./cookie/alice.txt --get --data-urlencode "q=%' OR project_id > 0 --" \
-  localhost:8080/projects/$ALICE_PROJECT/tasks
+  localhost:8980/projects/$ALICE_PROJECT/tasks
 
 # 同じ攻撃文字列を、危険な実装へ投げる
 curl -s -b ./cookie/alice.txt --get --data-urlencode "q=%' OR project_id > 0 --" \
-  localhost:8080/debug/unsafe-search/$ALICE_PROJECT
+  localhost:8980/debug/unsafe-search/$ALICE_PROJECT
 ```
 
 `--data-urlencode` を使うと、`'` や空白を含む文字列を安全に URL へ載せられる。
@@ -2757,9 +2757,9 @@ Chapter 04 でログアウトまで試した場合、`./cookie/alice.txt` の Se
 準備の Task 作成で何も表示されない場合も、原因は同じく Session 切れであることが多い。Project 作成が 401 になると、`sed` のパターンに一致しないエラー JSON がそのまま `ALICE_PROJECT` に入る。すると次の curl の URL に `{` `}` が含まれ、curl は URL を不正とみなして終了する（終了コード 3）。`-s` を付けているのでエラーメッセージも出ない。`echo "$ALICE_PROJECT"` で数字だけが表示されるか確かめ、JSON が表示されたらログインをやり直してから準備のコマンドを実行し直す。
 
 ```bash
-curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'
-curl -s -w '\n%{http_code}\n' -c ./cookie/bob.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/bob.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"bob@example.com","password":"bob-password-123"}'
 ```
 
@@ -2965,7 +2965,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
    SELECT $ALICE_PROJECT, 'task ' || g, (g % 2) + 1 FROM generate_series(1, 200) g;"
 
 # 比較用エンドポイントを3回叩く
-for i in 1 2 3; do curl -s -b ./cookie/alice.txt localhost:8080/debug/nplus1/$ALICE_PROJECT; echo; done
+for i in 1 2 3; do curl -s -b ./cookie/alice.txt localhost:8980/debug/nplus1/$ALICE_PROJECT; echo; done
 ```
 
 #### 期待結果

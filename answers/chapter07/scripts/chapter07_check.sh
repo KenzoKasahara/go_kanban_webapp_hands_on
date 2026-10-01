@@ -12,7 +12,7 @@
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 SUFFIX=$(date +%s)
 ALICE="alice-$SUFFIX@example.com"
 

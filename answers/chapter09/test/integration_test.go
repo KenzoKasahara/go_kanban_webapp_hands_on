@@ -49,13 +49,13 @@ func newTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 		 task_history, idempotency_keys RESTART IDENTITY CASCADE`)
 	if err != nil {
 		pool.Close()
-		t.Fatalf("truncate: %v (scripts/setup_test_db.sh で Test 用 DB を作成したか確認する)", err)
+		t.Fatalf("truncate: %v (Test 用 DB の kanban_test を作成したか確認する)", err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	cfg := app.DefaultConfig()
-	cfg.SlowQueryEnable = false
+	cfg.DebugRoutes = false
 
 	server := httptest.NewServer(app.New(pool, logger, cfg))
 

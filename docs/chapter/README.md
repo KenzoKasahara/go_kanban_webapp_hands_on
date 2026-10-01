@@ -21,7 +21,7 @@ Go の標準ライブラリ `net/http` と PostgreSQL で、複数ユーザー�
 ```mermaid
 flowchart LR
     C[Client / curl] --> MW
-    subgraph API["Go API Server :8080"]
+    subgraph API["Go API Server :8980"]
         MW[Middleware<br/>RequestID / Log / Timeout / Auth] --> H[Handler<br/>HTTP と Go 値の変換]
         H --> S[Service<br/>業務ルールの判断]
         S --> R[Repository<br/>SQL の実行]
@@ -177,7 +177,7 @@ go-kanban/
 └── go.mod
 ```
 
-章の途中のコード全体は、リポジトリ直下の `answers/` に章ごとに置く（現在は [Chapter 05](../../answers/chapter05/) のみ）。本文に抜粋しか載っていないファイルの答え合わせに使う。
+各章を終えた時点のコード全体は、リポジトリ直下の [answers/](../../answers/) に章ごとに置いている（`answers/chapter01/` 〜 `answers/chapter09/`）。本文に抜粋しか載っていないファイルの確認や、自分のコードが動かないときの答え合わせに使う。動かし方は各フォルダの `README.md` に書いてある。
 
 `internal/` 配下の package は、その親ツリーの外から import できない。このアプリ専用のコードであることを Go の仕組みとして明示できる。
 

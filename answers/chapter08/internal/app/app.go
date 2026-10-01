@@ -26,17 +26,17 @@ type Config struct {
 	// NotifyURL は通知 API の Base URL。空なら通知しない。
 	NotifyURL string
 
-	// SlowQueryEnable は Timeout 検証用の GET /debug/slow を登録するか。
+	// DebugRoutes は Timeout 検証用の GET /debug/slow を登録するか。
 	// 任意の時間 DB 接続を占有できるので、本番では無効にする。
-	SlowQueryEnable bool
+	DebugRoutes bool
 }
 
 func DefaultConfig() Config {
 	return Config{
-		SecureCookie:    false,
-		RequestTimeout:  2 * time.Second,
-		NotifyURL:       "",
-		SlowQueryEnable: false,
+		SecureCookie:   false,
+		RequestTimeout: 2 * time.Second,
+		NotifyURL:      "",
+		DebugRoutes:    false,
 	}
 }
 
@@ -98,7 +98,7 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, cfg Config) http.Handler {
 	mux.Handle("PATCH /tasks/{id}/status", requireAuth(taskHandler.ChangeStatus))
 
 	// Timeout の検証用（Part 1 Step 2）。
-	if cfg.SlowQueryEnable {
+	if cfg.DebugRoutes {
 		mux.Handle("GET /debug/slow", requireAuth(handler.SlowQuery(pool)))
 	}
 

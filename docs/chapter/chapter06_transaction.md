@@ -59,6 +59,10 @@ flowchart TD
     style H fill:#e0f0ff,color:#000
 ```
 
+## 完成時点のコード
+
+この章を終えた時点のコード全体は [answers/chapter06/](../../answers/chapter06/) にある。Part 1 で使う実験用ディレクトリ `goroutine-lab` も含む。自分のコードが動かないときの答え合わせに使う。
+
 ---
 
 ## Part 1. goroutine と Data Race
@@ -1037,7 +1041,7 @@ docker compose exec -T db psql -U kanban -d kanban -c '\d task_history'
 
 `Did not find any relation named "task_history".` と表示されたら、Step 8 の Migration を実行してから進む。
 
-前の Step までのサーバが動いたままなら、`Ctrl + C` で止める。止めないと変更前のコードが応答し続け、新しいサーバはポート 8080 を使えずに起動に失敗する。そのうえでビルドを確認し、サーバを起動する。
+前の Step までのサーバが動いたままなら、`Ctrl + C` で止める。止めないと変更前のコードが応答し続け、新しいサーバはポート 8980 を使えずに起動に失敗する。そのうえでビルドを確認し、サーバを起動する。
 
 ```bash
 go vet ./...
@@ -1052,7 +1056,7 @@ go run ./cmd/api
 
 ```bash
 mkdir -p cookie
-curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login \
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8980/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'
 ```
@@ -1062,7 +1066,7 @@ curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login
 Project の id も環境ごとに違う。alice の Project を新しく作り、id を変数に控える。
 
 ```bash
-PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Chapter06 Board"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
 echo "PROJECT_ID=$PROJECT_ID"
@@ -1076,7 +1080,7 @@ echo "PROJECT_ID=$PROJECT_ID"
 
 ```bash
 # 準備: Task を作り、id を控える
-TASK=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+TASK=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"write docs","priority":"high"}')
 echo "$TASK"
 NEW_TASK_ID=$(echo "$TASK" | head -n 1 | sed -E 's/^\{"id":([0-9]+).*/\1/')
@@ -1089,19 +1093,19 @@ echo "NEW_TASK_ID=$NEW_TASK_ID"
 
 ```bash
 # 不正な遷移
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":1}'
 
 # 正常な遷移
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"doing","version":1}'
 
 # 古い version で再実行
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":1}'
 
 # 正しい version で実行
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/$NEW_TASK_ID/status \
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/$NEW_TASK_ID/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":2}'
 ```
 
@@ -1157,7 +1161,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
 # 8並列で同じ version の更新を投げ、全部終わるまで wait で待つ
 for i in 1 2 3 4 5 6 7 8; do
   ( curl -s -o /dev/null -w "%{http_code}\n" -b ./cookie/alice.txt \
-      -X PATCH localhost:8080/tasks/$TASK_ID/status \
+      -X PATCH localhost:8980/tasks/$TASK_ID/status \
       -H 'Content-Type: application/json' \
       -d '{"status":"doing","version":1}' > "code_$i.txt" ) &
 done
@@ -1234,7 +1238,7 @@ docker compose exec -T db psql -U kanban -d kanban -c \
    CHECK (new_value <> 'done') NOT VALID;"
 
 # doing -> done を実行（Task の UPDATE は成功、history の INSERT が失敗する）
-curl -i -b ./cookie/alice.txt -X PATCH localhost:8080/tasks/206/status \
+curl -i -b ./cookie/alice.txt -X PATCH localhost:8980/tasks/206/status \
   -H 'Content-Type: application/json' -d '{"status":"done","version":1}'
 
 # DB の状態を確認

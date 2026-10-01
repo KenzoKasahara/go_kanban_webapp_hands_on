@@ -39,7 +39,7 @@ bash scripts/chapter01_check.sh
 | `GET /not-found` | 404 | `404 page not found` |
 | `POST /health` | 405 | `Allow: GET, HEAD`、`Method Not Allowed` |
 
-8080 番ポートを別のサーバ（後の章の `go-kanban` など）が使っていると、`server started on :8080` のあとに `listen tcp :8080: bind: ...` というエラーで終了します（`bind:` 以降の文言は OS によって異なります）。この状態でスクリプトを実行すると、別のサーバの応答を確認してしまうので注意してください。
+8980 番ポートを別のサーバ（後の章の `go-kanban` など）が使っていると、`server started on :8980` のあとに `listen tcp :8980: bind: ...` というエラーで終了します（`bind:` 以降の文言は OS によって異なります）。この状態でスクリプトを実行すると、別のサーバの応答を確認してしまうので注意してください。
 
 ## 本文との違い
 

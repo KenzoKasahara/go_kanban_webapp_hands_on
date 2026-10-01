@@ -15,7 +15,7 @@
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 COMPOSE_FILE=${COMPOSE_FILE:-$SCRIPT_DIR/../../../go-kanban/docker-compose.yml}
 DB_NAME=${DB_NAME:-kanban}

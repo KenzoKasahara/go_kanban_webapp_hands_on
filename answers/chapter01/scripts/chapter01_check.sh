@@ -11,7 +11,7 @@
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 
 PASSED=0
 FAILED=0

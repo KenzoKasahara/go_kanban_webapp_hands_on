@@ -13,7 +13,7 @@
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 LOG_FILE=${LOG_FILE:-}
 COMPOSE_DIR=${COMPOSE_DIR:-}
 SUFFIX=$(date +%s)

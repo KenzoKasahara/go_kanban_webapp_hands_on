@@ -15,7 +15,7 @@
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 
 # 存在しない ID として使う値。BIGSERIAL がここまで進むことはない。
 MISSING_ID=999999999

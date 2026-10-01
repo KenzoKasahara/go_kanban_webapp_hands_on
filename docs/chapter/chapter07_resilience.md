@@ -44,6 +44,8 @@ Webアプリ化(03-05) → **本番対応(06-08)** → Test(09)
 | `internal/repository/idempotency.go` | 新規作成 | 7 |
 | `internal/middleware/idempotency.go` | 新規作成 | 7 |
 
+完成時点のコード全体は [answers/chapter07/](../../answers/chapter07/) にもある。写し間違いを探すときの答え合わせに使う。
+
 ## 3つの関係
 
 ```mermaid
@@ -420,16 +422,16 @@ Chapter 04 で保存した Session Cookie は有効期限が 24 時間なので�
 ```bash
 # Session を取り直す（Chapter 04 と同じディレクトリで実行する）
 mkdir -p cookie
-curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'    # → 200
 
 # Server の上限は 2秒。DB を 3秒 待たせる
 curl -s -w 'status=%{http_code} time=%{time_total}s\n' \
-  -b ./cookie/alice.txt 'localhost:8080/debug/slow?seconds=3'
+  -b ./cookie/alice.txt 'localhost:8980/debug/slow?seconds=3'
 
 # 上限内（1秒）なら成功する
 curl -s -w 'status=%{http_code} time=%{time_total}s\n' \
-  -b ./cookie/alice.txt 'localhost:8080/debug/slow?seconds=1'
+  -b ./cookie/alice.txt 'localhost:8980/debug/slow?seconds=1'
 ```
 
 > **NOTE**
@@ -1058,7 +1060,7 @@ func run(logger *slog.Logger) error {
 	cfg.NotifyURL = os.Getenv("NOTIFY_URL")
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8980",
 		Handler:           app.New(pool, logger, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -1758,7 +1760,7 @@ flowchart TD
 まず alice の Project を作り、その ID を控える。
 
 ```bash
-PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8080/projects \
+PROJECT_ID=$(curl -s -b ./cookie/alice.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Chapter07 Board"}' \
   | sed -E 's/^\{"id":([0-9]+).*/\1/')
 echo "PROJECT_ID=$PROJECT_ID"
@@ -1768,25 +1770,25 @@ echo "PROJECT_ID=$PROJECT_ID"
 
 ```bash
 # Key なしで同じリクエストを2回
-curl -s -o /dev/null -w '1st: %{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+curl -s -o /dev/null -w '1st: %{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"duplicate me","priority":"low"}'
-curl -s -o /dev/null -w '2nd: %{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+curl -s -o /dev/null -w '2nd: %{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"duplicate me","priority":"low"}'
 
 # 同じタイトルの Task が何件できたか数える
-curl -s -b ./cookie/alice.txt localhost:8080/projects/$PROJECT_ID/tasks | grep -o '"title":"duplicate me"' | wc -l
+curl -s -b ./cookie/alice.txt localhost:8980/projects/$PROJECT_ID/tasks | grep -o '"title":"duplicate me"' | wc -l
 
 # Key ありで同じリクエストを2回
 KEY=$(openssl rand -hex 16)
-curl -i -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+curl -i -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" \
   -d '{"title":"idempotent task","priority":"low"}'
-curl -i -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+curl -i -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" \
   -d '{"title":"idempotent task","priority":"low"}'
 
 # 同じタイトルの Task が何件できたか数える
-curl -s -b ./cookie/alice.txt localhost:8080/projects/$PROJECT_ID/tasks | grep -o '"title":"idempotent task"' | wc -l
+curl -s -b ./cookie/alice.txt localhost:8980/projects/$PROJECT_ID/tasks | grep -o '"title":"idempotent task"' | wc -l
 ```
 
 #### 期待結果

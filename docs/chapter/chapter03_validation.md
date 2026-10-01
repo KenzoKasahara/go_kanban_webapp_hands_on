@@ -48,6 +48,10 @@ flowchart TD
     style L fill:#fff0d0,color:#000
 ```
 
+## 完成時点のコード
+
+この章を終えた時点のコード全体は [answers/chapter03/](../../answers/chapter03/) にある。`main.go` は本文では書き換えた部分だけを載せているので、ファイル全体はそちらで確認できる。
+
 ---
 
 ## Step 1. エラーを分類する仕組みを作る
@@ -549,7 +553,7 @@ Chapter 02 で観測した問題が、Status と Response Body の両方で解�
 先に、Task の追加先になる Project があるか確認する。DB を作り直した場合など、Project が無ければ作っておく。
 
 ```bash
-curl -X POST localhost:8080/projects \
+curl -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' \
   -d '{"name":"Kanban Hands-on"}'
 ```
@@ -563,37 +567,37 @@ Project が用意できたら、各ケースを順に叩く。`-w '\n%{http_code
 
 ```bash
 # title が空
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"","priority":"high"}'
 
 # title が空白だけ
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"   ","priority":"high"}'
 
 # priority が不正
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"ok","priority":"SUPER_HIGH"}'
 
 # フィールド名の typo
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"ok","titel":"typo"}'
 
 # 壊れた JSON
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":'
 
 # id が数値でない
-curl -s -w '\n%{http_code}\n' localhost:8080/tasks/abc
+curl -s -w '\n%{http_code}\n' localhost:8980/tasks/abc
 
 # 存在しない Task
-curl -s -w '\n%{http_code}\n' localhost:8080/tasks/9999
+curl -s -w '\n%{http_code}\n' localhost:8980/tasks/9999
 
 # 存在しない Project
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/9999/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/9999/tasks \
   -H 'Content-Type: application/json' -d '{"title":"ok","priority":"high"}'
 
 # 正常系
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects/1/tasks \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' -d '{"title":"write docs","priority":"high"}'
 ```
 

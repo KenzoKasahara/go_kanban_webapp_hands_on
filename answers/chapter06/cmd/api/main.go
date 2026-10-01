@@ -48,7 +48,7 @@ func run(logger *slog.Logger) error {
 	cfg := app.DefaultConfig()
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8980",
 		Handler:           app.New(pool, logger, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

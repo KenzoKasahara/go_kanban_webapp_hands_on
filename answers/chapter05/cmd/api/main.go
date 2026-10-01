@@ -50,7 +50,7 @@ func run(logger *slog.Logger) error {
 	cfg.DebugRoutes = os.Getenv("DEBUG_ROUTES") == "1"
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8980",
 		Handler:           app.New(pool, logger, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

@@ -44,6 +44,10 @@ flowchart TD
 | 実装場所 | Middleware（全 Request 共通） | 各操作の直前（操作ごとに条件が違う） |
 | 再試行の意味 | ログインし直せば通る | 何度やっても通らない |
 
+## 完成時点のコード
+
+この章を終えた時点のコード全体は [answers/chapter04/](../../answers/chapter04/) にある。`main.go` は本文では書き換えた Handler とルーティングだけを載せているので、ファイル全体はそちらで確認できる。
+
 ---
 
 ## Step 1. 認証用のテーブルを作る
@@ -879,7 +883,7 @@ func addMemberHandler(w http.ResponseWriter, r *http.Request) {
 
 ### 実行
 
-`go-kanban` ディレクトリでサーバを起動する。Chapter 03 のサーバが動いたままなら、先に `Ctrl + C` で止める。止めないと変更前のコードが応答し続け、新しいサーバはポート 8080 を使えずに起動に失敗する。
+`go-kanban` ディレクトリでサーバを起動する。Chapter 03 のサーバが動いたままなら、先に `Ctrl + C` で止める。止めないと変更前のコードが応答し続け、新しいサーバはポート 8980 を使えずに起動に失敗する。
 
 ```bash
 go vet ./...
@@ -892,57 +896,57 @@ go run ./cmd/api
 
 ```bash
 # ユーザー登録
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/users -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'    #1
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/users -H 'Content-Type: application/json' \
   -d '{"email":"bob@example.com","password":"bob-password-123"}'
 
 # 登録の失敗パターン
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/users -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'    #2 同じメールで再登録
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/users -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/users -H 'Content-Type: application/json' \
   -d '{"email":"carol@example.com","password":"short"}'               #3 12文字未満
 
 # Cookie なしで Project を作ろうとする
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/projects -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/projects -H 'Content-Type: application/json' \
   -d '{"name":"No Cookie"}'                                           #4
 
 # ログインの失敗パターン
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"wrong-password-1"}'    #5 誤ったパスワード
-curl -s -w '\n%{http_code}\n' -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"nobody@example.com","password":"alice-password-1"}'   #6 存在しないメール
 
 # ログイン（Cookie をファイルへ保存）
 # curl は保存先のディレクトリを作らないので、先に作っておく
 mkdir -p cookie
-curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/alice.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"alice-password-1"}'    #7
-curl -s -w '\n%{http_code}\n' -c ./cookie/bob.txt -X POST localhost:8080/login -H 'Content-Type: application/json' \
+curl -s -w '\n%{http_code}\n' -c ./cookie/bob.txt -X POST localhost:8980/login -H 'Content-Type: application/json' \
   -d '{"email":"bob@example.com","password":"bob-password-123"}'
 
 # alice が Project を作り、レスポンスの id を控える
-PROJECT=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8080/projects \
+PROJECT=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' -d '{"name":"Alice Board"}')
 echo "$PROJECT"
 PROJECT_ID=$(echo "$PROJECT" | head -n 1 | sed -E 's/^\{"id":([0-9]+).*/\1/')
 
 # alice がその Project に Task を作り、レスポンスの id を控える
-TASK=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+TASK=$(curl -s -w '\n%{http_code}' -b ./cookie/alice.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"secret task","priority":"high"}')
 echo "$TASK"                                                          #8
 TASK_ID=$(echo "$TASK" | head -n 1 | sed -E 's/^\{"id":([0-9]+).*/\1/')
 
 # alice が自分の Task を読む
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID     #9
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8980/tasks/$TASK_ID     #9
 
 # bob が alice の Task を読もうとする（IDOR）
-curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8080/tasks/$TASK_ID       #10
+curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8980/tasks/$TASK_ID       #10
 
 # bob が alice の Project を操作しようとする
-curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt -X POST localhost:8080/projects/$PROJECT_ID/tasks \
+curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt -X POST localhost:8980/projects/$PROJECT_ID/tasks \
   -H 'Content-Type: application/json' -d '{"title":"intruder","priority":"low"}'  #11
-curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8080/projects/$PROJECT_ID/tasks  #12
+curl -s -w '\n%{http_code}\n' -b ./cookie/bob.txt localhost:8980/projects/$PROJECT_ID/tasks  #12
 ```
 
 | オプション | 意味 |
@@ -991,8 +995,8 @@ Project と Task の ID は固定の値にしない。Chapter 03 までに作っ
 ### ログアウト後に Cookie を使い回す（Failure Test）
 
 ```bash
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8080/logout     # → 204
-curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_ID    # → 401
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt -X POST localhost:8980/logout     # → 204
+curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8980/tasks/$TASK_ID    # → 401
 ```
 
 実際の出力。ログアウトは Body が空なので、1行目は空行になる。JSON の Body と Status Code の間にも空行が入る。サーバの `json.Encoder` が Body の末尾に改行を付け、さらに `-w` の `\n` が続くためである。
@@ -1028,7 +1032,7 @@ curl -s -w '\n%{http_code}\n' -b ./cookie/alice.txt localhost:8080/tasks/$TASK_I
 
 set -u
 
-BASE_URL=${BASE_URL:-http://localhost:8080}
+BASE_URL=${BASE_URL:-http://localhost:8980}
 SUFFIX=$(date +%s)
 ALICE="alice-$SUFFIX@example.com"
 BOB="bob-$SUFFIX@example.com"

@@ -13,7 +13,7 @@ DB もフレームワークもまだ使わない。`net/http` だけで JSON を
 ## 完了条件
 
 - [ ] `go run ./cmd/api` でサーバが起動する
-- [ ] `curl http://localhost:8080/health` が `{"status":"ok"}` を返す
+- [ ] `curl http://localhost:8980/health` が `{"status":"ok"}` を返す
 - [ ] 存在しない Path が 404 を返すことを確認した
 - [ ] `w` と `r` がそれぞれ何を表すか説明できる
 
@@ -23,7 +23,7 @@ DB もフレームワークもまだ使わない。`net/http` だけで JSON を
 curl
  │ HTTP GET /health
  ▼
-net/http Server (:8080)
+net/http Server (:8980)
  │
  ▼
 ServeMux           URL と Handler の対応表
@@ -34,6 +34,10 @@ healthHandler      JSON を書き込む
  ▼
 HTTP Response
 ```
+
+## 完成時点のコード
+
+この章を終えた時点のコード全体は [answers/chapter01/](../../answers/chapter01/) にある。コードは Step 2 に全文が載っているので、違いが出るとすれば `go.mod` くらいだ。
 
 ---
 
@@ -110,11 +114,11 @@ func main() {
 	mux.HandleFunc("GET /health", healthHandler)
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":8980",
 		Handler: mux,
 	}
 
-	log.Println("server started on :8080")
+	log.Println("server started on :8980")
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
@@ -144,13 +148,13 @@ main()
  ├─ http.NewServeMux()   URL と Handler の対応表を作る
  ├─ mux.HandleFunc()     "GET /health" を healthHandler に割り当てる
  ├─ &http.Server{}       Server の設定を作る
- └─ ListenAndServe()     8080 番ポートで待ち受ける（ここで処理が止まる）
+ └─ ListenAndServe()     8980 番ポートで待ち受ける（ここで処理が止まる）
 ```
 
 `main()` の中で作っているのは次の3つの係。それぞれを作り、つないでから待ち受けを始めている。
 
 ```text
-http.Server     8080 番ポートで接続を受け付ける係      ← &http.Server{} で作る
+http.Server     8980 番ポートで接続を受け付ける係      ← &http.Server{} で作る
    │ Request を渡す
    ▼
 ServeMux        メソッドと Path を見て振り分ける係    ← http.NewServeMux() で作る
@@ -236,25 +240,25 @@ Server の設定を構造体にまとめ、そのポインタを `server` に入
 
 ```go
 server := &http.Server{   // & ：作った構造体のポインタ（*http.Server）を取る
-    Addr:    ":8080",      // 待ち受けるアドレスとポート
+    Addr:    ":8980",      // 待ち受けるアドレスとポート
     Handler: mux,          // 届いた Request を渡す相手
 }
 ```
 
 | フィールド | 値 | 意味 |
 |---|---|---|
-| `Addr` | `":8080"` | ホストを省略すると、このマシンのすべてのネットワークインターフェースの 8080 番ポートで待ち受ける |
+| `Addr` | `":8980"` | ホストを省略すると、このマシンのすべてのネットワークインターフェースの 8980 番ポートで待ち受ける |
 | `Handler` | `mux` | 届いた Request をすべて mux に渡す |
 | 書いていないフィールド | ゼロ値 | 数値は `0`、文字列は `""`、ポインタは `nil` になる |
 
 `Handler` フィールドの型は `http.Handler` インターフェースで、`ServeHTTP(w, r)` メソッドを持つ型なら何でも入れられる。`*http.ServeMux` はこのメソッドを持っているので、そのまま入れられる。[What Happened?](#what-happened) の図の `ServeHTTP(w, r)` は、Server がこのメソッドを呼んでいる部分にあたる。
 
-#### `http.ListenAndServe(":8080", mux)` との違い
+#### `http.ListenAndServe(":8980", mux)` との違い
 
-次の1行でも同じサーバが起動する。内部で `http.Server{Addr: ":8080", Handler: mux}` を作っているだけである。
+次の1行でも同じサーバが起動する。内部で `http.Server{Addr: ":8980", Handler: mux}` を作っているだけである。
 
 ```go
-http.ListenAndServe(":8080", mux)
+http.ListenAndServe(":8980", mux)
 ```
 
 `http.Server` を自分で作るのは、あとから設定を足せるようにするためである。
@@ -421,7 +425,7 @@ go run ./cmd/api
 **別のターミナル**で実行する。
 
 ```bash
-curl -i http://localhost:8080/health
+curl -i http://localhost:8980/health
 ```
 
 ### 期待結果
@@ -448,7 +452,7 @@ Content-Length: 16
 ### Failure Test 1: 存在しない Path
 
 ```bash
-curl -i http://localhost:8080/not-found
+curl -i http://localhost:8980/not-found
 ```
 
 実際の出力。
@@ -466,7 +470,7 @@ X-Content-Type-Options: nosniff
 ### Failure Test 2: 登録していないメソッド
 
 ```bash
-curl -i -X POST http://localhost:8080/health
+curl -i -X POST http://localhost:8980/health
 ```
 
 実際の出力。
@@ -489,7 +493,7 @@ Method Not Allowed
 
 ## What Happened?
 
-`curl http://localhost:8080/health` を実行したとき、実際に起きていること。
+`curl http://localhost:8980/health` を実行したとき、実際に起きていること。
 
 ```mermaid
 sequenceDiagram
@@ -498,7 +502,7 @@ sequenceDiagram
     participant M as ServeMux
     participant H as healthHandler
 
-    C->>N: TCP 接続 (localhost:8080)
+    C->>N: TCP 接続 (localhost:8980)
     C->>N: GET /health HTTP/1.1
     N->>N: Request 行・ヘッダを解析し http.Request を組み立てる
     N->>M: ServeHTTP(w, r)

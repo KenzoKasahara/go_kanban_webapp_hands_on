@@ -26,11 +26,11 @@ func main() {
 	mux.HandleFunc("GET /health", healthHandler)
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":8980",
 		Handler: mux,
 	}
 
-	log.Println("server started on :8080")
+	log.Println("server started on :8980")
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)

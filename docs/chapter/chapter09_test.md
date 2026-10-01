@@ -34,6 +34,10 @@
 
 下ほど速く、数を多く書ける。上ほど遅いが、実際の構成に近い。**同じことを複数の層でテストしない。**
 
+## 完成時点のコード
+
+この章を終えた時点のコード全体、つまりハンズオン全体の完成形は [answers/chapter09/](../../answers/chapter09/) にある。本文に抜粋しか載っていないテストの全体を確認できる。
+
 ---
 
 ## Part 1. Unit Test
@@ -43,6 +47,8 @@
 #### やること
 
 `model.CanTransition` の全パターンをテストする。既知の3状態どうしの組み合わせ9通りと、未知の状態を渡した2通りを並べる。
+
+あわせて、Status の文字列が正しい値かを判定する `model.IsValidStatus` もテストする。
 
 #### 実行
 
@@ -92,6 +98,33 @@ func TestCanTransition(t *testing.T) {
 		})
 	}
 }
+
+// 大文字の "TODO" や空文字も不正な値として扱うことを確認する。
+func TestIsValidStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{model.StatusTodo, true},
+		{model.StatusDoing, true},
+		{model.StatusDone, true},
+		{"archived", false},
+		{"", false},
+		{"TODO", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			t.Parallel()
+
+			if got := model.IsValidStatus(tt.status); got != tt.want {
+				t.Errorf("IsValidStatus(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}
 ```
 
 <details>
@@ -127,7 +160,13 @@ Go で最も一般的なテストの書き方。
 
 Chapter 03 で触れた「rune 数で数える」挙動を、テストで固定する。
 
+テスト対象は、Chapter 05 で `internal/model/task.go` に移した `CreateTaskInput` の `Normalize()` と `Validate()`、定数 `MaxTitleLength`（100）。
+
 #### 実行
+
+Step 1 と同じ `internal/model/task_test.go` の末尾（`TestIsValidStatus` の後ろ）に追記する。package と import は Step 1 のままでよい。
+
+まず、日本語のタイトルで「100 文字は OK、101 文字は NG」を確認するテスト。
 
 ```go
 // 日本語など、1文字が複数byteになる入力でも
@@ -154,7 +193,7 @@ func TestTitleLengthCountsRunesNotBytes(t *testing.T) {
 }
 ```
 
-Validation の網羅テスト。
+続けて、同じファイルに `Validate()` の網羅テストを追記する。空文字・空白のみ・長すぎるタイトル・不正な Priority・Priority 省略時の既定値を、Step 1 と同じ Table Driven Test で並べる。
 
 ```go
 func TestCreateTaskInputValidate(t *testing.T) {
@@ -200,7 +239,7 @@ func TestCreateTaskInputValidate(t *testing.T) {
 ```
 
 > **POINT**
-> 「100 文字は OK、101 文字は NG」という境界のテストがあれば、`len([]rune(...))` を `len(...)` に書き換えた時点で落ちる。仕様が壊れたことに一番早く気づけるのは、こういう境界のテストだ。
+> 「100 文字は OK、101 文字は NG」という境界のテストがあれば、`len([]rune(...))` を `len(...)` に書き換えた時点で落ちる。仕様が壊れたことに一番早く気づけるのはこういう境界のテスト。
 
 ---
 
@@ -401,15 +440,86 @@ Chapter 07 で決めた設計判断を、テストとして固定した。本物
 
 ## Part 3. Integration Test
 
+Part 2 では Repository を Fake に差し替えた。Part 3 では何も差し替えず、HTTP から DB までを実際に通す。
+
+```mermaid
+flowchart LR
+    T[Test 関数] -->|"client.mustStatus()<br/>HTTP リクエスト"| S["httptest.Server<br/>app.New()"]
+    S --> DB[(kanban_test)]
+    T -->|"assertXxx()<br/>pool で直接 SELECT"| DB
+```
+
+テストは2つの経路で結果を確かめる。HTTP のレスポンスはアプリを通して、DB の中身はアプリを通さずに読む。
+
+| | Service Test（Part 2） | Integration Test（Part 3） |
+| --- | --- | --- |
+| Repository | Fake | 実 PostgreSQL |
+| HTTP | 通らない | Handler・Middleware・Cookie まで通る |
+| `t.Parallel()` | 付ける | 付けない（[理由](#なぜ-tparallel-を付けないのか)） |
+| 実行 | `go test ./...` | `go test -tags=integration ./test/...` |
+
+作るファイルは2つ。
+
+```text
+test/
+├── integration_test.go   共通部品（テスト用サーバ、HTTP クライアント、DB の検証）  Step 4
+└── scenario_test.go      テストシナリオ本体                                        Step 5〜6
+```
+
 ### Step 4. 実 DB に対して HTTP から検証する
 
 #### やること
 
-`httptest.Server` で実際のアプリを起動し、HTTP クライアントとして叩く。
+テスト専用の DB を作る。そのうえで、`httptest.Server` でアプリを起動し、HTTP クライアントとして叩くための共通部品を用意する。
 
 #### 実行
 
-Build tag で通常のテストから分離する。`test/integration_test.go`。
+##### 1. テスト用の DB を作る
+
+Integration Test は、各テストの最初に全テーブルを `TRUNCATE` する。開発用の `kanban` DB に向けると、Chapter 08 までに作ったデータがすべて消える。同じコンテナの中に、テスト専用の `kanban_test` を別に作る。
+
+`go-kanban/` で実行する。
+
+```bash
+docker compose exec -T db psql -U kanban -d kanban -c "CREATE DATABASE kanban_test;"
+
+for f in migrations/*.sql; do
+  docker compose exec -T db psql -U kanban -d kanban_test -v ON_ERROR_STOP=1 < "$f"
+done
+```
+
+| 指定 | 理由 |
+| --- | --- |
+| `-d kanban` で `CREATE DATABASE` | 接続先の DB が要るので、既存の `kanban` に接続してから新しい DB を作る |
+| `migrations/*.sql` | ファイル名の番号順（001 → 004）に展開される。Chapter 06・07 で足した `task_history` と `idempotency_keys` も作られる |
+| `-v ON_ERROR_STOP=1` | SQL が1つでも失敗したらそこで止める。失敗を見逃して進むと、テーブルが足りないままテストが落ち、原因を追いにくい |
+
+期待結果（検証環境での実際の出力）。
+
+```text
+CREATE DATABASE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE TABLE
+CREATE INDEX
+ALTER TABLE
+CREATE INDEX
+CREATE TABLE
+CREATE INDEX
+CREATE TABLE
+```
+
+> **NOTE**
+> 2回目の `CREATE DATABASE` は `already exists` で失敗する。作り直すときは、先に `DROP DATABASE kanban_test;` を実行する。
+> 同じ処理をまとめたスクリプトが [answers/chapter09/scripts/setup_test_db.sh](../../answers/chapter09/scripts/setup_test_db.sh) にある。
+
+##### 2. テスト用サーバを起動する関数
+
+`test/integration_test.go` を作る。package 宣言・import と、テスト用サーバを起動する関数。
 
 ```go
 //go:build integration
@@ -418,14 +528,38 @@ Build tag で通常のテストから分離する。`test/integration_test.go`�
 // 通常の `go test ./...` では実行されない。
 //
 //	go test -tags=integration ./test/...
+//
+// 各 Test の最初に全テーブルを TRUNCATE する。
+// 開発用の DB を消さないよう、既定では kanban_test DB に接続する。
 package test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"os"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"example.com/go-kanban/internal/app"
+	"example.com/go-kanban/internal/middleware"
+)
+
+const defaultTestDSN = "postgres://kanban:local-dev-password@localhost:5432/kanban_test"
 
 func newTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 	t.Helper()
 
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://kanban:local-dev-password@localhost:5432/kanban"
+		dsn = defaultTestDSN
 	}
 
 	pool, err := pgxpool.New(context.Background(), dsn)
@@ -433,18 +567,19 @@ func newTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 		t.Fatalf("connect db: %v", err)
 	}
 
-	// テスト間で状態が残らないよう、毎回初期化する。
+	// Test間で状態が残らないよう、毎回初期化する。
 	_, err = pool.Exec(context.Background(),
 		`TRUNCATE tasks, project_members, projects, sessions, users,
 		 task_history, idempotency_keys RESTART IDENTITY CASCADE`)
 	if err != nil {
-		t.Fatalf("truncate: %v", err)
+		pool.Close()
+		t.Fatalf("truncate: %v (Test 用 DB の kanban_test を作成したか確認する)", err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	cfg := app.DefaultConfig()
-	cfg.SlowQueryEnable = false
+	cfg.DebugRoutes = false
 
 	server := httptest.NewServer(app.New(pool, logger, cfg))
 
@@ -457,13 +592,56 @@ func newTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 }
 ```
 
-Cookie を自動で扱うクライアント。
+| コード | 理由 |
+| --- | --- |
+| `//go:build integration` | `-tags=integration` を付けたときだけコンパイルされる。詳しくは Step 7 の GO NOTE |
+| `package test` | `internal/` の外にある別パッケージ。アプリには `app.New()` などの公開された入口からしか触れず、外から使う立場でテストする |
+| 既定の DSN が `kanban_test` | 環境変数 `TEST_DATABASE_URL` を設定し忘れても、開発用 DB を消さない |
+| `TRUNCATE` | 全テーブルを空にする。テストの結果が、実行の順番や前回の残りデータに左右されなくなる |
+| `RESTART IDENTITY` | `BIGSERIAL` の採番を 1 に戻す。失敗したときのログに出る ID が毎回同じになり、比較しやすい |
+| `CASCADE` | 外部キーで参照しているテーブルも一緒に空にする。テーブルを足したときに、ここへ書き忘れても `TRUNCATE` が失敗しない |
+| `io.Discard` のロガー | アクセスログを捨てる。`go test -v` の出力にリクエストごとのログが混ざらない |
+| `cfg.DebugRoutes = false` | `DefaultConfig()` の時点で `false` だが、検証用エンドポイント（Chapter 07）を登録しないことを明示する |
+| `httptest.NewServer` | 空いているポートで実際に待ち受ける。リクエストは TCP を通り、Middleware・ルーティング・Cookie まで本番と同じ経路で処理される |
+| `t.Helper()` | テストが失敗したとき、この関数の中ではなく呼び出し元の行番号が表示される |
+| `t.Cleanup` | テストの終了時に、成功・失敗を問わず呼ばれる。`defer` と違い、ヘルパー関数の中で登録しても、呼び出し元のテストが終わるまで実行を待つ |
+
+`app.New()` に依存を注入できる設計（Chapter 05）が、ここで効いてくる。グローバル変数の `pool` が残っていたら、テストごとに別の DB へ向けられない。
+
+<details>
+<summary>GO NOTE: <code>httptest.NewServer</code> と <code>httptest.NewRecorder</code></summary>
+
+| | `NewServer` | `NewRecorder` |
+| --- | --- | --- |
+| 仕組み | 実際にポートを開き、HTTP で通信する | `Handler.ServeHTTP` を関数として直接呼ぶ |
+| Cookie Jar | `http.Client` の Jar がそのまま使える | Cookie を自分でヘッダーに詰める |
+| 向いている用途 | ログインから一連の操作を通すシナリオ | Handler 単体の入出力 |
+
+この章ではログイン後の Session Cookie を引き継ぎたいので、`NewServer` を使う。
+
+</details>
+
+##### 3. HTTP クライアント
+
+同じファイルに続けて書く。
 
 ```go
+// --- HTTP Client -------------------------------------------------------
+
+type client struct {
+	t       *testing.T
+	baseURL string
+	http    *http.Client
+}
+
+func newJar() (http.CookieJar, error) {
+	return cookiejar.New(nil)
+}
+
 func newClient(t *testing.T, baseURL string) *client {
 	t.Helper()
 
-	// Cookie Jar を持たせると、ログイン後の Session Cookie を http.Client が自動で送る。
+	// Cookie Jar を持たせると、Login後のSession Cookieが自動で送られる。
 	jar, err := newJar()
 	if err != nil {
 		t.Fatalf("cookie jar: %v", err)
@@ -471,20 +649,256 @@ func newClient(t *testing.T, baseURL string) *client {
 
 	return &client{t: t, baseURL: baseURL, http: &http.Client{Jar: jar}}
 }
+
+// do は Request を送り、Status と Body を返す。body が nil なら Body を送らない。
+func (c *client) do(method, path string, body any, headers map[string]string) (int, []byte) {
+	c.t.Helper()
+
+	var reader io.Reader
+
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			c.t.Fatalf("encode request body: %v", err)
+		}
+
+		reader = bytes.NewReader(raw)
+	}
+
+	req, err := http.NewRequest(method, c.baseURL+path, reader)
+	if err != nil {
+		c.t.Fatalf("build request: %v", err)
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.t.Fatalf("read response body: %v", err)
+	}
+
+	return resp.StatusCode, respBody
+}
+
+// mustStatus は Status が期待どおりでなければ Test を止める。
+// 以降の手順が前の結果に依存するため、Errorf ではなく Fatalf にする。
+func (c *client) mustStatus(want int, method, path string, body any) []byte {
+	c.t.Helper()
+
+	got, respBody := c.do(method, path, body, nil)
+	if got != want {
+		c.t.Fatalf("%s %s: status = %d, want %d, body = %s", method, path, got, want, respBody)
+	}
+
+	return respBody
+}
+
+func (c *client) mustStatusWithKey(want int, method, path string, body any, key string) []byte {
+	c.t.Helper()
+
+	got, respBody := c.do(method, path, body, map[string]string{
+		middleware.IdempotencyKeyHeader: key,
+	})
+	if got != want {
+		c.t.Fatalf("%s %s (key=%s): status = %d, want %d, body = %s",
+			method, path, key, got, want, respBody)
+	}
+
+	return respBody
+}
+
+// registerAndLogin は User を登録してログインし、登録された User の id を返す。
+func (c *client) registerAndLogin(email, password string) int64 {
+	c.t.Helper()
+
+	creds := map[string]string{"email": email, "password": password}
+
+	user := decode[idResponse](c.t, c.mustStatus(http.StatusCreated, http.MethodPost, "/users", creds))
+	c.mustStatus(http.StatusNoContent, http.MethodPost, "/login", creds)
+
+	return user.ID
+}
 ```
 
-`app.New()` に依存を注入できる設計（Chapter 05）が、ここで効いてくる。グローバル変数の `pool` が残っていたら、テストごとに別の DB へ向けられない。
+| コード | 理由 |
+| --- | --- |
+| `client` に Cookie Jar を1つずつ持たせる | alice と bob で別の `client` を作れば、別々のブラウザでログインしているのと同じ状態になる。Session Cookie が混ざらない |
+| `do` | JSON への変換、`Content-Type` の設定、レスポンスの読み切りを1か所にまとめる。テスト本体には「誰が・何を送り・何が返るべきか」だけが残る |
+| `mustStatus` が `Fatalf` | 登録に失敗したらログインも失敗し、以降のすべての行が失敗する。最初の失敗で止めれば、原因の行だけが表示される。失敗メッセージにレスポンスの Body を含めているので、400 の理由などもそのまま読める |
+| 戻り値が `[]byte` | `decode` にそのまま渡して、作成された ID を取り出せる |
+| `middleware.IdempotencyKeyHeader` | ヘッダー名を文字列で書かず、アプリ側の定数（Chapter 07）を使う。名前を変えたときにテストだけ古いまま残らない |
+| `registerAndLogin` | Step 6 以降のテストは、登録とログインが前提条件にすぎない。1行にまとめて本題を読みやすくする |
+
+##### 4. レスポンスの読み取りと DB の検証
+
+同じファイルの末尾に書く。
+
+```go
+// --- Response ----------------------------------------------------------
+
+type idResponse struct {
+	ID int64 `json:"id"`
+}
+
+type errorResponse struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func decode[T any](t *testing.T, body []byte) T {
+	t.Helper()
+
+	var v T
+
+	if err := json.Unmarshal(body, &v); err != nil {
+		t.Fatalf("decode %T: %v, body = %s", v, err, body)
+	}
+
+	return v
+}
+
+func projectPath(id int64, suffix string) string {
+	return fmt.Sprintf("/projects/%d%s", id, suffix)
+}
+
+func taskPath(id int64, suffix string) string {
+	return fmt.Sprintf("/tasks/%d%s", id, suffix)
+}
+
+// --- DB Assertion ------------------------------------------------------
+//
+// HTTP の Response だけでなく、DB に何が書かれたかを直接確認する。
+
+func assertTaskStatus(t *testing.T, pool *pgxpool.Pool, taskID int64, wantStatus string, wantVersion int) {
+	t.Helper()
+
+	var (
+		status  string
+		version int
+	)
+
+	err := pool.QueryRow(context.Background(),
+		"SELECT status, version FROM tasks WHERE id = $1", taskID,
+	).Scan(&status, &version)
+	if err != nil {
+		t.Fatalf("query task %d: %v", taskID, err)
+	}
+
+	if status != wantStatus || version != wantVersion {
+		t.Fatalf("task %d: status=%q version=%d, want status=%q version=%d",
+			taskID, status, version, wantStatus, wantVersion)
+	}
+}
+
+func assertHistoryCount(t *testing.T, pool *pgxpool.Pool, taskID int64, want int) {
+	t.Helper()
+
+	var got int
+
+	err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM task_history WHERE task_id = $1", taskID,
+	).Scan(&got)
+	if err != nil {
+		t.Fatalf("count history: %v", err)
+	}
+
+	if got != want {
+		t.Fatalf("task %d: history rows = %d, want %d", taskID, got, want)
+	}
+}
+
+func assertTaskCount(t *testing.T, pool *pgxpool.Pool, projectID int64, want int) {
+	t.Helper()
+
+	var got int
+
+	err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM tasks WHERE project_id = $1", projectID,
+	).Scan(&got)
+	if err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+
+	if got != want {
+		t.Fatalf("project %d: task rows = %d, want %d", projectID, got, want)
+	}
+}
+```
+
+| コード | 理由 |
+| --- | --- |
+| `decode[T any]` | Generics（Go 1.18 以降）。`decode[idResponse](t, body)` のように、呼び出し側で受け取る型を指定する。型ごとに decode 関数を書かずに済む |
+| `idResponse` | 作成 API のレスポンスから `id` だけを取り出す。ほかのフィールドは無視される |
+| `errorResponse` | Chapter 03 のエラー形式（`{"error":{"code":...,"message":...}}`）を読む。Step 6 の `TestValidationThroughHTTP` が使う |
+| `projectPath` / `taskPath` | ID の埋め込みを1か所にまとめる。`"/tasks/" + id` の書き間違いを防ぐ |
+| `assertXxx` が `pool` で直接 SELECT | アプリの API で読み直すと、書き込みと読み出しの両方に同じバグがあったとき気づけない。アプリを通らない経路で DB を読む |
+
+#### 期待結果
+
+テストはまだないが、コンパイルが通ることを確認する。`go-kanban/` で実行する。
+
+```bash
+go vet -tags=integration ./test/...
+```
+
+何も表示されずに終われば成功。
+
+> **NOTE**
+> import の `example.com/go-kanban` は Chapter 01 の `go mod init` に合わせている。別のモジュールパスで始めた場合は、自分の `go.mod` の `module` 行に読み替える。
+
+#### なぜ `t.Parallel()` を付けないのか
+
+Part 1〜2 のテストにはすべて `t.Parallel()` を付けた。Integration Test には付けない。
+
+全テストが1つの `kanban_test` を共有し、各テストの最初に `TRUNCATE` するから。並列に動かすと、あるテストが作ったデータを、別のテストの `TRUNCATE` が途中で消す。
+
+```text
+TestA: 登録 → Project 作成 ─────────────→ Task 取得 → 404（期待は 200）
+TestB:                     TRUNCATE ↑
+```
+
+失敗するかどうかが実行のタイミングで変わるので、原因を追いにくい。並列にしたい場合は、テストごとに別の DB やスキーマを用意する必要がある。
 
 ---
 
 ### Step 5. 認可シナリオをテストする
 
+#### やること
+
+2人のユーザー（alice と bob）を作り、Chapter 04 で curl を使って確認した認証・認可を、1つのシナリオとして自動化する。
+
 #### 実行
 
-`test/scenario_test.go`（抜粋）。
+`test/scenario_test.go` を作る。
 
 ```go
-// 認証・認可・IDOR を、実際の HTTP と DB を通して確認する。
+//go:build integration
+
+package test
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+
+	"example.com/go-kanban/internal/model"
+)
+
+// 認証・認可・IDOR を、実際のHTTPとDBを通して確認する。
 func TestAuthorizationScenario(t *testing.T) {
 	server, _ := newTestServer(t)
 
@@ -493,8 +907,8 @@ func TestAuthorizationScenario(t *testing.T) {
 
 	alice.mustStatus(http.StatusCreated, http.MethodPost, "/users",
 		map[string]string{"email": "alice@example.com", "password": "alice-password-1"})
-	bob.mustStatus(http.StatusCreated, http.MethodPost, "/users",
-		map[string]string{"email": "bob@example.com", "password": "bob-password-123"})
+	bobUser := decode[idResponse](t, bob.mustStatus(http.StatusCreated, http.MethodPost, "/users",
+		map[string]string{"email": "bob@example.com", "password": "bob-password-123"}))
 
 	// 未認証では作成できない。
 	alice.mustStatus(http.StatusUnauthorized, http.MethodPost, "/projects",
@@ -516,28 +930,61 @@ func TestAuthorizationScenario(t *testing.T) {
 	// 本人は読める。
 	alice.mustStatus(http.StatusOK, http.MethodGet, taskPath(task.ID, ""), nil)
 
-	// 他人からは「存在しない」ように見える。403 を返すと、その ID の Task が
-	// 存在することを攻撃者へ教えてしまう。
+	// 他人からは「存在しない」ように見える。403 を返すと、そのIDのTaskが
+	// 存在することを攻撃者へ教えることになる。
 	bob.mustStatus(http.StatusNotFound, http.MethodGet, taskPath(task.ID, ""), nil)
 
-	// Project 外のユーザーは一覧も作成もできない。
+	// 存在しない Task も同じ 404。区別がつかないことが大事。
+	bob.mustStatus(http.StatusNotFound, http.MethodGet, taskPath(task.ID+1000, ""), nil)
+
+	// Project外のUserは一覧も作成もできない。
 	bob.mustStatus(http.StatusForbidden, http.MethodGet, projectPath(project.ID, "/tasks"), nil)
 	bob.mustStatus(http.StatusForbidden, http.MethodPost, projectPath(project.ID, "/tasks"),
 		map[string]string{"title": "intruder", "priority": "low"})
 
 	// Viewer として追加されると、読めるが書けない。
 	alice.mustStatus(http.StatusNoContent, http.MethodPost, projectPath(project.ID, "/members"),
-		map[string]any{"user_id": 2, "role": model.RoleViewer})
+		map[string]any{"user_id": bobUser.ID, "role": model.RoleViewer})
 
 	bob.mustStatus(http.StatusOK, http.MethodGet, taskPath(task.ID, ""), nil)
 	bob.mustStatus(http.StatusForbidden, http.MethodPost, projectPath(project.ID, "/tasks"),
 		map[string]string{"title": "intruder", "priority": "low"})
+	bob.mustStatus(http.StatusForbidden, http.MethodPatch, taskPath(task.ID, "/status"),
+		map[string]any{"status": "doing", "version": 1})
 
-	// ログアウト後は Session が無効になる。
+	// Owner 以外は Member を追加できない。
+	bob.mustStatus(http.StatusForbidden, http.MethodPost, projectPath(project.ID, "/members"),
+		map[string]any{"user_id": bobUser.ID, "role": model.RoleOwner})
+
+	// Logout後はSessionが無効になる。
 	alice.mustStatus(http.StatusNoContent, http.MethodPost, "/logout", nil)
 	alice.mustStatus(http.StatusUnauthorized, http.MethodGet, taskPath(task.ID, ""), nil)
 }
 ```
+
+`strings` は Step 6 で追記する `TestValidationThroughHTTP` が使う。先に import しておく。
+
+bob が受け取るレスポンスを、段階ごとに並べる。
+
+| bob の立場 | 操作 | 期待 | 確認していること |
+| --- | --- | --- | --- |
+| Project 外 | alice の Task を GET | 404 | 他人の Task の存在を漏らさない（Chapter 04） |
+| Project 外 | 存在しない Task を GET | 404 | 上の 404 と区別がつかない |
+| Project 外 | Project の Task 一覧・作成 | 403 | メンバーでなければ Project 配下を操作できない |
+| Viewer | alice の Task を GET | 200 | 読める |
+| Viewer | Task 作成・Status 変更 | 403 | 書けない |
+| Viewer | Member 追加 | 403 | Member を追加できるのは Owner だけ |
+
+| コード | 理由 |
+| --- | --- |
+| `alice` と `bob` を別の `client` にする | Cookie Jar が別なので、2人が同時にログインしている状態を作れる |
+| `bobUser.ID` を使う | ID を `2` と直書きしない。今は `RESTART IDENTITY` で 2 になるが、登録の順番を変えただけで別人を指す（Chapter 04 の「ID は固定の値にしない」と同じ理由） |
+| `task.ID+1000` | 確実に存在しない ID。他人の Task と同じ 404 が返ることで、「404 だから存在しない」とも「存在する」とも判断できないことを確かめる |
+| 最後にログアウト | Session が DB から消え、同じ Cookie が使えなくなることを確認する |
+
+> **NOTE**
+> 同じ bob でも、Task の GET は 404、Project の一覧は 403 になる。Chapter 04 の実装では、Task は取得と認可を1つのクエリにまとめたので「見えない = 404」になる。Project 配下の操作は、先にメンバーかどうかを確認して 403 で断る。
+> そのため Project ID の存在は、403 から推測できる。Project の存在も隠したい要件なら、Project 側も 404 に揃える。
 
 Chapter 04 で curl を使って手で確認したことを、いつでも自動で再実行できるようになった。
 
@@ -547,18 +994,29 @@ Chapter 04 で curl を使って手で確認したことを、いつでも自動
 
 #### やること
 
-HTTP のレスポンスだけでなく、DB に何が書かれたかを確認する。
+HTTP のレスポンスだけでなく、DB に何が書かれたかを確認する。Chapter 06 の Transaction と Optimistic Lock、Chapter 07 の冪等性を対象にする。
 
 #### 実行
 
+`test/scenario_test.go` の末尾に追記する。
+
 ```go
-// Task 更新と履歴追加が、同時に成功するか同時に失敗するかを確認する。
+// Task更新と履歴追加が、同時に成功するか同時に失敗するかを確認する。
 func TestStatusChangeWritesHistoryAtomically(t *testing.T) {
 	server, pool := newTestServer(t)
 
-	// （alice の登録・ログイン・Project と Task の作成は省略）
+	alice := newClient(t, server.URL)
+	alice.registerAndLogin("alice@example.com", "alice-password-1")
 
-	// 許可されない遷移は 400 で、DB は変わらない。
+	project := decode[idResponse](t, alice.mustStatus(
+		http.StatusCreated, http.MethodPost, "/projects",
+		map[string]string{"name": "Alice Board"}))
+
+	task := decode[idResponse](t, alice.mustStatus(
+		http.StatusCreated, http.MethodPost, projectPath(project.ID, "/tasks"),
+		map[string]string{"title": "write docs", "priority": "high"}))
+
+	// 許可されない遷移は 400 で、DBは変わらない。
 	alice.mustStatus(http.StatusBadRequest, http.MethodPatch, taskPath(task.ID, "/status"),
 		map[string]any{"status": "done", "version": 1})
 
@@ -578,21 +1036,46 @@ func TestStatusChangeWritesHistoryAtomically(t *testing.T) {
 
 	assertTaskStatus(t, pool, task.ID, model.StatusDoing, 2)
 	assertHistoryCount(t, pool, task.ID, 1)
+
+	// 正しい version なら続けて更新できる。
+	alice.mustStatus(http.StatusOK, http.MethodPatch, taskPath(task.ID, "/status"),
+		map[string]any{"status": "done", "version": 2})
+
+	assertTaskStatus(t, pool, task.ID, model.StatusDone, 3)
+	assertHistoryCount(t, pool, task.ID, 2)
 }
 ```
+
+リクエストごとに、Task と履歴がどう変わるかを並べる。
+
+| リクエスト | 期待 | Task の status / version | 履歴の件数 |
+| --- | --- | --- | --- |
+| （作成直後） | | todo / 1 | 0 |
+| todo → done（version 1） | 400 | todo / 1（変わらない） | 0 |
+| todo → doing（version 1） | 200 | doing / 2 | 1 |
+| doing → done（version 1、古い） | 409 | doing / 2（変わらない） | 1 |
+| doing → done（version 2） | 200 | done / 3 | 2 |
 
 > **POINT**
 > 拒否されたリクエストで DB が変わっていないことまで確認している。
 > 「400 が返った」だけでは、DB に書いてからロールバックしたのか、そもそも書いていないのか区別できない。
+> 成功時は、Task の更新と履歴の追加が「両方」起きていることを確認する。片方だけ増えていたら、Chapter 06 の Transaction が効いていない。
 
-冪等性の検証。
+409 の後に正しい version で更新できることも確認している。Optimistic Lock が「一度競合したら二度と更新できない」状態を作っていないことを確かめるため。
+
+続けて、冪等性を検証する。同じファイルの末尾に追記する。
 
 ```go
 // 同じ Idempotency-Key の再送が二重作成にならないことを確認する。
 func TestIdempotentTaskCreation(t *testing.T) {
 	server, pool := newTestServer(t)
 
-	// （省略）
+	alice := newClient(t, server.URL)
+	alice.registerAndLogin("alice@example.com", "alice-password-1")
+
+	project := decode[idResponse](t, alice.mustStatus(
+		http.StatusCreated, http.MethodPost, "/projects",
+		map[string]string{"name": "Alice Board"}))
 
 	body := map[string]string{"title": "pay invoice", "priority": "high"}
 	path := projectPath(project.ID, "/tasks")
@@ -612,8 +1095,92 @@ func TestIdempotentTaskCreation(t *testing.T) {
 	alice.mustStatusWithKey(http.StatusCreated, http.MethodPost, path, body, "key-456")
 
 	assertTaskCount(t, pool, project.ID, 2)
+
+	// 他人が同じ Key を使っても、alice の Response は返らない。
+	// bob は Project のメンバーではないので、通常どおり処理されて 403 になる。
+	bob := newClient(t, server.URL)
+	bob.registerAndLogin("bob@example.com", "bob-password-123")
+	bob.mustStatusWithKey(http.StatusForbidden, http.MethodPost, path, body, "key-123")
+
+	assertTaskCount(t, pool, project.ID, 2)
 }
 ```
+
+| 送信者と Key | 期待 | Task の件数 | 確認していること |
+| --- | --- | --- | --- |
+| alice / `key-123` | 201 | 1 | 通常どおり作成される |
+| alice / `key-123`（再送） | 201、同じ ID | 1 | 保存したレスポンスを返し、二重に作成しない |
+| alice / `key-456` | 201 | 2 | Key が違えば別の処理になる |
+| bob / `key-123` | 403 | 2 | Key はユーザーごとに区別される。他人の Key を使っても、alice のレスポンス（Task の ID）は手に入らない |
+
+2回目も 201 が返るので、ステータスだけを見ると「2件作られた」のと区別がつかない。ID の一致と DB の件数で、作られたのが1件だけであることを確かめる。
+
+最後の bob の行は、Idempotency-Key をユーザーと組にして保存していなければ失敗する。Key だけで保存していると、bob に alice のレスポンスがそのまま返ってしまう。
+
+最後に、Validation の経路を確認する。同じファイルの末尾に追記する。
+
+```go
+// Validation が HTTP の 400 として返り、DB に何も書かれないことを確認する。
+// 境界値そのものは model の Unit Test で見ているので、ここでは経路だけを確認する。
+func TestValidationThroughHTTP(t *testing.T) {
+	server, pool := newTestServer(t)
+
+	alice := newClient(t, server.URL)
+
+	// 12文字未満のパスワードでは登録できない。
+	alice.mustStatus(http.StatusBadRequest, http.MethodPost, "/users",
+		map[string]string{"email": "alice@example.com", "password": "short"})
+
+	alice.registerAndLogin("alice@example.com", "alice-password-1")
+
+	// 同じメールアドレスでは登録できない。
+	alice.mustStatus(http.StatusConflict, http.MethodPost, "/users",
+		map[string]string{"email": "alice@example.com", "password": "alice-password-1"})
+
+	project := decode[idResponse](t, alice.mustStatus(
+		http.StatusCreated, http.MethodPost, "/projects",
+		map[string]string{"name": "Alice Board"}))
+
+	path := projectPath(project.ID, "/tasks")
+
+	tests := []struct {
+		name string
+		body any
+	}{
+		{"whitespace title", map[string]string{"title": "   ", "priority": "high"}},
+		{"title too long", map[string]string{"title": strings.Repeat("あ", model.MaxTitleLength+1)}},
+		{"invalid priority", map[string]string{"title": "ok", "priority": "SUPER_HIGH"}},
+		{"unknown field", map[string]string{"title": "ok", "priorty": "high"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := decode[errorResponse](t, alice.mustStatus(
+				http.StatusBadRequest, http.MethodPost, path, tt.body))
+
+			if resp.Error.Code != "invalid_request" {
+				t.Fatalf("error code = %q, want invalid_request", resp.Error.Code)
+			}
+		})
+	}
+
+	// Path の id が数値でなければ 400。
+	alice.mustStatus(http.StatusBadRequest, http.MethodGet, "/tasks/abc", nil)
+
+	// 不正な Status は 400。
+	alice.mustStatus(http.StatusBadRequest, http.MethodPatch, taskPath(1, "/status"),
+		map[string]any{"status": "archived", "version": 1})
+
+	assertTaskCount(t, pool, project.ID, 0)
+}
+```
+
+| コード | 理由 |
+| --- | --- |
+| ケースを4つに絞る | 100 文字と 101 文字の境界などは Step 2 の Unit Test で確認済み。ここでは「Validation のエラーが HTTP の 400 と `invalid_request` になって返るか」という経路だけを見る。[テストピラミッド](#テストピラミッド)の「同じことを複数の層でテストしない」に当たる |
+| `"priorty"`（綴りの誤り） | 未知のフィールドを拒否する設定（Chapter 03 の `DisallowUnknownFields`）が、HTTP 経由でも効いていることを確認する |
+| サブテストに `t.Parallel()` がない | 親テストと同じ DB を使う。[Step 4](#なぜ-tparallel-を付けないのか) と同じ理由 |
+| 最後の `assertTaskCount(..., 0)` | 400 を返したリクエストが、1件も Task を作っていないことを確認する |
 
 ---
 
@@ -628,13 +1195,13 @@ go test ./...
 # 競合状態の検出付き
 go test -race ./...
 
-# Integration（実 DB が必要）
+# Integration（実 DB が必要。Step 4 で作った kanban_test を使う）
 go test -tags=integration ./test/...
 ```
 
 #### 期待結果
 
-検証環境での実際の出力。
+検証環境での実際の出力。パッケージ名の `example.com/go-kanban` は、自分の `go.mod` の `module` 行に読み替える。
 
 ```text
 === go test ./... ===
@@ -657,7 +1224,7 @@ ok  	example.com/go-kanban/internal/service	1.477s
 ok  	example.com/go-kanban/test	0.810s
 ```
 
-Integration Test の内訳。
+Integration Test の内訳。`go test -v -tags=integration ./test/...` のように `-v` を付けると表示される（サブテストの行は省略）。
 
 ```text
 --- PASS: TestAuthorizationScenario (0.29s)
@@ -721,7 +1288,7 @@ Build Tag
 import http from 'k6/http';
 import { check, group } from 'k6';
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:8980';
 const EMAIL = __ENV.EMAIL || 'loadtest@example.com';
 const PASSWORD = __ENV.PASSWORD || 'loadtest-password-1';
 
@@ -786,6 +1353,16 @@ export default function (data) {
 }
 ```
 
+| コード | 意味 |
+| --- | --- |
+| VU（Virtual User） | 並行してリクエストを送る仮想ユーザー。`stages` の `target` は VU の数で、各 VU が `default` 関数を繰り返し実行する |
+| `setup()` の戻り値 | 各 VU の `default` 関数に引数 `data` として渡される。ログインと Project の作成は1回だけ行い、全 VU で共有する |
+| Cookie を手でヘッダーに付ける | k6 の Cookie Jar は VU ごとに分かれていて、`setup()` でログインしたときの Cookie は VU に引き継がれない。そのため Cookie の値を `data` で受け渡し、`Cookie` ヘッダーとして送る。これを消すと全リクエストが 401 になる |
+| `__VU` / `__ITER` | 実行中の VU の番号と、その VU の何回目の実行かを表す。Task のタイトルが重複しないように使う |
+| `check` | 条件を満たした割合を `checks` として集計する。失敗してもスクリプトは止まらない |
+| `group` | 結果をグループ名ごとにまとめて表示する |
+| `thresholds` | 合否の基準。1つでも超えると、k6 は結果の最後にエラーを出して終了コードを非 0 にする |
+
 API サーバ（`go run ./cmd/api`）と DB を起動した状態で、k6 を Docker で実行する。サーバログはあとで集計に使うので、ファイルへ保存しておく。
 
 ```bash
@@ -795,13 +1372,13 @@ go run ./cmd/api > logs/server.log 2>&1
 
 # k6 を実行（スクリプトは標準入力から渡す）
 docker run --rm -i \
-  -e BASE_URL=http://host.docker.internal:8080 \
+  -e BASE_URL=http://host.docker.internal:8980 \
   grafana/k6:2.3.0 run - < scripts/load-test.js
 ```
 
 | 指定 | 理由 |
 | --- | --- |
-| `-e BASE_URL=http://host.docker.internal:8080` | コンテナの中の `localhost` はコンテナ自身を指す。ホストで動く API へは `host.docker.internal` で届く |
+| `-e BASE_URL=http://host.docker.internal:8980` | コンテナの中の `localhost` はコンテナ自身を指す。ホストで動く API へは `host.docker.internal` で届く |
 | `run -` と `< scripts/load-test.js` | スクリプトを標準入力で渡す。Volume のマウントが不要になり、Windows のパス表記の違いに悩まされない |
 | `grafana/k6:2.3.0` | タグでバージョンを固定する。`latest` だと実行時期によって結果の表示形式が変わる |
 

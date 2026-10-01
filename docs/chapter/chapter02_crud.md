@@ -30,6 +30,10 @@ Handler        ← HTTP も Validation も SQL も全部ここに書く（あえ
 PostgreSQL
 ```
 
+## 完成時点のコード
+
+この章を終えた時点のコード全体は [answers/chapter02/](../../answers/chapter02/) にある。自分のコードが動かないときの答え合わせに使う。
+
 ---
 
 ## Step 1. PostgreSQL を起動する
@@ -412,9 +416,9 @@ func main() {
 	mux.HandleFunc("GET /projects/{id}/tasks", listTasksHandler)
 	mux.HandleFunc("GET /tasks/{id}", getTaskHandler)
 
-	log.Println("server started on :8080")
+	log.Println("server started on :8980")
 
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	if err := http.ListenAndServe(":8980", mux); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -436,7 +440,7 @@ go run ./cmd/api
 
 ### 期待結果
 
-サーバが起動し、`server started on :8080` が出る。`pool.Ping()` が通らなければ DB 接続の問題なので、ここで気づける。
+サーバが起動し、`server started on :8980` が出る。`pool.Ping()` が通らなければ DB 接続の問題なので、ここで気づける。
 
 ### なぜこの書き方をするのか（あえて）
 
@@ -546,12 +550,12 @@ Python の感覚で「渡せば中身を埋めてもらえる」と考えると�
 
 ```bash
 # Project を作る
-curl -X POST localhost:8080/projects \
+curl -X POST localhost:8980/projects \
   -H 'Content-Type: application/json' \
   -d '{"name":"Kanban Hands-on"}'
 
 # Task を作る
-curl -X POST localhost:8080/projects/1/tasks \
+curl -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' \
   -d '{"title":"write docs","description":"","priority":"high"}'
 ```
@@ -579,7 +583,7 @@ curl -X POST localhost:8080/projects/1/tasks \
 ### Failure Test 1: 空の title と存在しない priority
 
 ```bash
-curl -i -X POST localhost:8080/projects/1/tasks \
+curl -i -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' \
   -d '{"title":"","priority":"SUPER_HIGH"}'
 ```
@@ -598,7 +602,7 @@ HTTP/1.1 201 Created
 > title が空でも、priority が定義外の値でも 201 Created で保存される。
 > DB に `title TEXT NOT NULL` と書いてあるので弾かれそうに見えるが、空文字は NULL ではないので制約に引っかからない。
 
-一度保存されると、この不正データは一覧 API（`curl localhost:8080/projects/1/tasks`）にもそのまま出てくる。
+一度保存されると、この不正データは一覧 API（`curl localhost:8980/projects/1/tasks`）にもそのまま出てくる。
 
 ```json
 [{"id":1,...,"title":"write docs",...},
@@ -608,7 +612,7 @@ HTTP/1.1 201 Created
 ### Failure Test 2: 存在しない Task を取得する
 
 ```bash
-curl -i localhost:8080/tasks/9999
+curl -i localhost:8980/tasks/9999
 ```
 
 実際の出力。
@@ -626,7 +630,7 @@ no rows in result set
 ### Failure Test 3: 存在しない Project に Task を作る
 
 ```bash
-curl -i -X POST localhost:8080/projects/9999/tasks \
+curl -i -X POST localhost:8980/projects/9999/tasks \
   -H 'Content-Type: application/json' \
   -d '{"title":"orphan","priority":"low"}'
 ```
@@ -646,7 +650,7 @@ ERROR: insert or update on table "tasks" violates foreign key constraint "tasks_
 ### Failure Test 4: JSON のフィールド名を打ち間違える
 
 ```bash
-curl -i -X POST localhost:8080/projects/1/tasks \
+curl -i -X POST localhost:8980/projects/1/tasks \
   -H 'Content-Type: application/json' \
   -d '{"titel":"typo","priority":"low"}'
 ```

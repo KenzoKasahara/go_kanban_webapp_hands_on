@@ -366,9 +366,9 @@ func main() {
 	mux.HandleFunc("GET /projects/{id}/tasks", requireAuth(listTasksHandler))
 	mux.HandleFunc("GET /tasks/{id}", requireAuth(getTaskHandler))
 
-	log.Println("server started on :8080")
+	log.Println("server started on :8980")
 
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	if err := http.ListenAndServe(":8980", mux); err != nil {
 		log.Fatal(err)
 	}
 }

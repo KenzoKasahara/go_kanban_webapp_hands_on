@@ -54,7 +54,7 @@ func run(logger *slog.Logger) error {
 	cfg.NotifyURL = os.Getenv("NOTIFY_URL")
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8980",
 		Handler:           app.New(pool, logger, cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
